@@ -1,12 +1,23 @@
-add_library(agent_transport INTERFACE)
+if(WIN32)
+    add_library(agent_transport STATIC
+        src/winhttp_transport.cpp
+    )
+    target_link_libraries(agent_transport PUBLIC winhttp)
+    target_include_directories(agent_transport
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+    )
+    target_compile_features(agent_transport PUBLIC cxx_std_20)
+else()
+    add_library(agent_transport INTERFACE)
+    target_include_directories(agent_transport
+        INTERFACE
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:include>
+    )
+    target_compile_features(agent_transport INTERFACE cxx_std_20)
+endif()
 
-target_include_directories(agent_transport
-    INTERFACE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_compile_features(agent_transport INTERFACE cxx_std_20)
-
-# 具体实现按宿主平台接入：
-# - CLI / 服务端：libcurl（待接入）
-# - UE 宿主：FHttpModule（阶段 B）
+# Windows 目前是临时 WinHTTP 实现；跨平台正式实现将换成 libcurl（CurlHttpTransport）。
+# UE 宿主不链接这里，而是用 FHttpModule 实现 HttpTransport。

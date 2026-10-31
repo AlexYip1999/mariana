@@ -1,0 +1,272 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+#include <nlohmann/json.hpp>
+
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+#include "agent/hosts/cli/cli_app.h"
+#include "agent/hosts/cli/cli_config.h"
+#include "agent/model/openai_model_adapter.h"
+#include "support/fake_http_transport.h"
+
+namespace
+{
+
+agent::hosts::cli::CliConfig MakeCliConfig()
+{
+    agent::hosts::cli::CliConfig config;
+    config.model = "deepseek-flash";
+    config.system_prompt = "be brief";
+    config.max_tokens = 64;
+    return config;
+}
+
+agent::model::OpenAiConfig MakeOpenAiConfig()
+{
+    agent::model::OpenAiConfig config;
+    config.endpoint = "https://api.deepseek.com/chat/completions";
+    config.model = "deepseek-flash";
+    config.api_key = "test-key";
+    return config;
+}
+
+agent::transport::HttpResponse MakeChatResponse(const std::string& content)
+{
+    nlohmann::json parsed;
+    parsed["choices"] = nlohmann::json::array();
+    parsed["choices"].push_back({{"message", {{"content", content}}}});
+    agent::transport::HttpResponse response;
+    response.status = 200;
+    response.body = parsed.dump();
+    return response;
+}
+
+} // namespace
+
+TEST_CASE("parses cli config overrides")
+{
+    const agent::hosts::cli::ConfigLoadResult result = agent::hosts::cli::ParseCliConfig(
+        R"({"endpoint":"https://example.test/chat","model":"deepseek-reasoner","timeout_ms":5000,"temperature":0.3})");
+
+    CHECK(result.ok);
+    CHECK(result.config.endpoint == "https://example.test/chat");
+    CHECK(result.config.model == "deepseek-reasoner");
+    CHECK(result.config.timeout_ms == 5000);
+    CHECK(result.config.temperature == doctest::Approx(0.3));
+    CHECK(result.config.api_key_env == "DEEPSEEK_API_KEY");
+}
+
+TEST_CASE("merges config over a base")
+{
+    agent::hosts::cli::CliConfig base;
+    base.model = "shared-model";
+    base.max_tokens = 111;
+
+    const agent::hosts::cli::ConfigLoadResult result = agent::hosts::cli::ParseCliConfig(R"({"max_tokens":222})", base);
+
+    CHECK(result.ok);
+    CHECK(result.config.model == "shared-model");
+    CHECK(result.config.max_tokens == 222);
+    CHECK(result.config.endpoint == base.endpoint);
+}
+
+TEST_CASE("rejects invalid cli config")
+{
+    const agent::hosts::cli::ConfigLoadResult result = agent::hosts::cli::ParseCliConfig("not-json");
+
+    CHECK_FALSE(result.ok);
+    CHECK_FALSE(result.error.empty());
+}
+
+TEST_CASE("rejects api keys stored in config")
+{
+    const agent::hosts::cli::ConfigLoadResult result = agent::hosts::cli::ParseCliConfig(R"({"api_key":"sk-test"})");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("api_key") != std::string::npos);
+}
+
+TEST_CASE("loads config.local.json from working directory")
+{
+    const std::string path = "config.local.json";
+    {
+        std::ofstream file(path);
+        file << R"({"model":"unit-test-model"})";
+    }
+
+    const agent::hosts::cli::DefaultConfigResult result = agent::hosts::cli::LoadDefaultCliConfig();
+    std::filesystem::remove(path);
+
+    CHECK(result.ok);
+    CHECK(result.found);
+    CHECK(result.path == path);
+    CHECK(result.config.model == "unit-test-model");
+}
+
+TEST_CASE("loads shared config from exe directory")
+{
+    const std::filesystem::path exe_dir = std::filesystem::temp_directory_path() / "agent-core-shared-config-test";
+    std::filesystem::remove_all(exe_dir);
+    std::filesystem::create_directories(exe_dir);
+    {
+        std::ofstream file(exe_dir / "config.json");
+        file << R"({"model":"shared-model","max_tokens":111})";
+    }
+
+    const agent::hosts::cli::DefaultConfigResult result =
+        agent::hosts::cli::LoadDefaultCliConfig((exe_dir / "agent-cli.exe").string());
+    std::filesystem::remove_all(exe_dir);
+
+    CHECK(result.ok);
+    CHECK(result.found);
+    CHECK(result.config.model == "shared-model");
+    CHECK(result.config.max_tokens == 111);
+    CHECK(result.config.endpoint == agent::hosts::cli::CliConfig{}.endpoint);
+}
+
+TEST_CASE("local config overrides shared fields")
+{
+    const std::filesystem::path exe_dir = std::filesystem::temp_directory_path() / "agent-core-merge-config-test";
+    std::filesystem::remove_all(exe_dir);
+    std::filesystem::create_directories(exe_dir);
+    {
+        std::ofstream file(exe_dir / "config.json");
+        file << R"({"model":"shared-model","max_tokens":111})";
+    }
+    {
+        std::ofstream file(exe_dir / "config.local.json");
+        file << R"({"max_tokens":222})";
+    }
+
+    const agent::hosts::cli::DefaultConfigResult result =
+        agent::hosts::cli::LoadDefaultCliConfig((exe_dir / "agent-cli.exe").string());
+    std::filesystem::remove_all(exe_dir);
+
+    CHECK(result.ok);
+    CHECK(result.found);
+    CHECK(result.config.model == "shared-model");
+    CHECK(result.config.max_tokens == 222);
+    CHECK(result.local_path.find("config.local.json") != std::string::npos);
+}
+
+TEST_CASE("uses built-in defaults when no config exists")
+{
+    const std::filesystem::path exe_dir = std::filesystem::temp_directory_path() / "agent-core-empty-config-test";
+    std::filesystem::remove_all(exe_dir);
+    std::filesystem::create_directories(exe_dir);
+
+    const agent::hosts::cli::DefaultConfigResult result =
+        agent::hosts::cli::LoadDefaultCliConfig((exe_dir / "agent-cli.exe").string());
+    std::filesystem::remove_all(exe_dir);
+
+    CHECK(result.ok);
+    CHECK_FALSE(result.found);
+    CHECK(result.config.model == agent::hosts::cli::CliConfig{}.model);
+    CHECK(result.config.endpoint == agent::hosts::cli::CliConfig{}.endpoint);
+}
+
+TEST_CASE("writes default config and refuses overwrite")
+{
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "agent-core-init-config-test.json";
+    std::filesystem::remove(path);
+
+    const agent::hosts::cli::ConfigInitResult init = agent::hosts::cli::WriteDefaultCliConfigFile(path.string());
+    CHECK(init.ok);
+
+    const agent::hosts::cli::ConfigLoadResult loaded = agent::hosts::cli::LoadCliConfigFile(path.string());
+    CHECK(loaded.ok);
+    CHECK(loaded.config.model == agent::hosts::cli::CliConfig{}.model);
+
+    const agent::hosts::cli::ConfigInitResult again = agent::hosts::cli::WriteDefaultCliConfigFile(path.string());
+    CHECK_FALSE(again.ok);
+    CHECK(again.error.find("already exists") != std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("reports missing config file")
+{
+    const agent::hosts::cli::ConfigLoadResult result =
+        agent::hosts::cli::LoadCliConfigFile("definitely-missing-config.json");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("cannot open") != std::string::npos);
+}
+
+TEST_CASE("resolves api key from environment lookup")
+{
+    agent::hosts::cli::CliConfig config;
+    config.api_key_env = "TEST_KEY";
+
+    const std::string key =
+        agent::hosts::cli::ResolveApiKey(config,
+                                         [](const std::string& name)
+                                         {
+                                             return name == "TEST_KEY" ? std::string("secret") : std::string();
+                                         });
+
+    CHECK(key == "secret");
+}
+
+TEST_CASE("runs a single question and prints content")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            return MakeChatResponse("hello");
+        });
+
+    agent::model::OpenAiModelAdapter adapter(transport, MakeOpenAiConfig());
+    std::ostringstream out;
+    std::ostringstream err;
+    const int exit_code = agent::hosts::cli::RunCli({"hello"}, adapter, MakeCliConfig(), out, err);
+
+    CHECK(exit_code == 0);
+    CHECK(out.str().find("hello") != std::string::npos);
+    CHECK(err.str().empty());
+    CHECK(transport.RequestCount() == 1);
+
+    const nlohmann::json body = nlohmann::json::parse(transport.LastRequest().body);
+    CHECK(body["messages"].size() == 2);
+    CHECK(body["messages"][0]["role"] == "system");
+    CHECK(body["messages"][1]["role"] == "user");
+    CHECK(body["messages"][1]["content"] == "hello");
+}
+
+TEST_CASE("reports model errors")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            agent::transport::HttpResponse response;
+            response.error = "timeout";
+            return response;
+        });
+
+    agent::model::OpenAiModelAdapter adapter(transport, MakeOpenAiConfig());
+    std::ostringstream out;
+    std::ostringstream err;
+    const int exit_code = agent::hosts::cli::RunCli({"hello"}, adapter, MakeCliConfig(), out, err);
+
+    CHECK(exit_code == 1);
+    CHECK(err.str().find("timeout") != std::string::npos);
+}
+
+TEST_CASE("rejects empty question")
+{
+    agent::tests::FakeHttpTransport transport;
+    agent::model::OpenAiModelAdapter adapter(transport, MakeOpenAiConfig());
+    std::ostringstream out;
+    std::ostringstream err;
+    const int exit_code = agent::hosts::cli::RunCli({}, adapter, MakeCliConfig(), out, err);
+
+    CHECK(exit_code == 2);
+    CHECK(err.str().find("usage") != std::string::npos);
+    CHECK(transport.RequestCount() == 0);
+}

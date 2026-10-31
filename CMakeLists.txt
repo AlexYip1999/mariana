@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
     add_compile_options(/W4 /permissive- /utf-8)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -25,6 +26,7 @@ target_include_directories(agent_third_party INTERFACE
 # 模块：依赖方向 hosts -> adapters -> core
 add_subdirectory(source/core)
 add_subdirectory(source/adapters/transport)
+add_subdirectory(source/adapters/model)
 add_subdirectory(source/hosts/cli)
 
 option(AGENT_CORE_BUILD_TESTS "Build agent-core tests" ON)

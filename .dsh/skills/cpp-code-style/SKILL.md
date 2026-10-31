@@ -11,12 +11,39 @@ description: 用于在 agent-core 项目中新增、修改、评审或提交 C++
 
 ## 铁律
 
-1. **块级右大括号 `}` 必须独占一行**：位于行首（保留缩进），不允许出现在语句同一行。花括号初始化（`= { ... };`、`return {};`、`v{1, 2}`）不算块级大括号。
-   - 禁止：`if (ok) { Do(); }`、`} else {`、`}}  // namespace`
-   - 允许：`};`、`}  // namespace agent::core`
+1. **右大括号 `}` 必须独占一行**（行首，保留缩进），包括：
+   - 块级大括号（函数 / 控制流 / namespace 等）；
+   - 多行花括号初始化列表里的每个嵌套元素（`{`、`}` 都独占一行）。
+   - 例外：单行语句（以 `;` 结尾）可保持紧凑，如 `return {};`、`std::vector<int> v = {1, 2};`。
+   - 禁止：`if (ok) { Do(); }`、`} else {`、多行列表中的 `{agent::core::ChatRole::User, "hi"},`。
+   - 允许：`};`、`}  // namespace agent::core`。
 2. **左大括号同样换行**（Allman）。大括号位置由 `.clang-format` 决定，不要手调。
 3. 缩进 4 空格、不使用 Tab、行宽 120。
 4. 格式以 `clang-format` 的结果为准，不要凭感觉"看起来对齐"。
+
+初始化列表正确写法：
+
+```cpp
+request.messages = {
+    {
+        agent::core::ChatRole::System,
+        "be brief",
+    },
+    {
+        agent::core::ChatRole::User,
+        "hi",
+    },
+};
+```
+
+错误写法（检查器会拦截）：
+
+```cpp
+request.messages = {
+    {agent::core::ChatRole::System, "be brief"},
+    {agent::core::ChatRole::User, "hi"},
+};
+```
 
 ## 改完代码后的固定流程（顺序不要换）
 
@@ -78,7 +105,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 
 - [ ] `scripts/check-format.ps1` 通过（退出码 0）
 - [ ] `scripts/verify.ps1` 通过（或格式、构建、测试分别通过）
-- [ ] 块级 `}` 都在行首（初始化列表 / `return {};` 除外）
+- [ ] 块级 `}` 和多行初始化列表的 `}` 都在行首（单行语句 / `return {};` 除外）
 - [ ] 命名符合规范：类型/函数 PascalCase，变量/文件 snake_case，成员变量 `m_` 前缀
 - [ ] `third_party/`、`build/` 未被改动
 - [ ] `git status` 无意外文件

@@ -6,7 +6,11 @@
     Two checks; any failure exits with code 1:
     1. clang-format --dry-run --Werror against .clang-format
     2. Right brace rule: '}' must start a line (only indentation before it).
-       Rejects "if (...) { ... }", "} else {", "struct X {};" etc.
+       Applies to block braces AND to nested entries of multi-line braced
+       initializer lists. Single-line statements ending with ';' are exempt
+       (e.g. 'return {};', 'std::vector<int> v = {1, 2};').
+       Rejects "if (...) { ... }", "} else {", and
+       '{agent::core::ChatRole::User, "hi"},'.
     Skips build/, third_party/, .git/.
 #>
 [CmdletBinding()]
@@ -96,13 +100,16 @@ foreach ($f in $files) {
             continue
         }
 
-        # Initializer braces such as '= { ... };' or 'return {};' are not block
-        # braces; statement lines ending with ';' are exempt.
-        if ($code.TrimEnd() -match ';$') {
+        # Single-line statements (ending with ';') may keep compact braces,
+        # e.g. 'return {};', 'std::vector<int> v = {1, 2};'. Multi-line
+        # initializer entries ending with ',' must expand their closing brace
+        # to its own line.
+        if ($code.TrimEnd().EndsWith(";")) {
             continue
         }
 
-        # A block-level right brace must be the first non-whitespace character.
+        # A right brace (block or multi-line braced-list entry) must be the
+        # first non-whitespace character of the line.
         if ($code -notmatch "^\s*}") {
             $braceViolations.Add([pscustomobject]@{
                     File = $f.FullName
@@ -130,7 +137,7 @@ if ($formatFailures.Count -gt 0 -or $braceViolations.Count -gt 0) {
         foreach ($v in $braceViolations) {
             Write-Host ("    {0}:{1}  {2}" -f $v.File, $v.Line, $v.Text)
         }
-        Write-Host "  Rule: block-level '}' must start a line (indentation allowed). No 'if (...) { ... }', '} else {'." -ForegroundColor Yellow
+        Write-Host "  Rule: '}' must start a line (indentation allowed) — block braces and multi-line braced-list entries; single-line statements ending with ';' are exempt." -ForegroundColor Yellow
     }
 
     exit 1

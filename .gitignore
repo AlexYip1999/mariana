@@ -15,6 +15,7 @@ CMakeUserPresets.json
 traces/
 logs/
 *.trace.jsonl
+# 共享默认配置 resources/config.json 需要提交；config.local.json 是本机覆盖，不入库
 config.local.json
 .env
 .env.*
