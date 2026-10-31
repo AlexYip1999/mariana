@@ -59,6 +59,11 @@ TEST_CASE("builds OpenAI-compatible request and parses content")
             nlohmann::json parsed;
             parsed["choices"] = nlohmann::json::array();
             parsed["choices"].push_back({{"message", {{"content", "hello"}}}});
+            parsed["usage"]["prompt_tokens"] = 120;
+            parsed["usage"]["completion_tokens"] = 20;
+            parsed["usage"]["total_tokens"] = 140;
+            parsed["usage"]["prompt_cache_hit_tokens"] = 100;
+            parsed["usage"]["prompt_cache_miss_tokens"] = 20;
             agent::transport::HttpResponse response;
             response.status = 200;
             response.body = parsed.dump();
@@ -70,6 +75,11 @@ TEST_CASE("builds OpenAI-compatible request and parses content")
 
     CHECK(response.ok);
     CHECK(response.content == "hello");
+    CHECK(response.usage.prompt_tokens == 120);
+    CHECK(response.usage.completion_tokens == 20);
+    CHECK(response.usage.total_tokens == 140);
+    CHECK(response.usage.prompt_cache_hit_tokens == 100);
+    CHECK(response.usage.prompt_cache_miss_tokens == 20);
     CHECK(transport.RequestCount() == 1);
 
     const agent::transport::HttpRequest& request = transport.LastRequest();
@@ -85,6 +95,33 @@ TEST_CASE("builds OpenAI-compatible request and parses content")
     CHECK(body["messages"][0]["role"] == "system");
     CHECK(body["messages"][1]["role"] == "user");
     CHECK(body["messages"][1]["content"] == "hi");
+}
+
+TEST_CASE("parses OpenAI-style cached tokens")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            nlohmann::json parsed;
+            parsed["choices"] = nlohmann::json::array();
+            parsed["choices"].push_back({{"message", {{"content", "hello"}}}});
+            parsed["usage"]["prompt_tokens"] = 100;
+            parsed["usage"]["completion_tokens"] = 10;
+            parsed["usage"]["total_tokens"] = 110;
+            parsed["usage"]["prompt_tokens_details"]["cached_tokens"] = 80;
+            agent::transport::HttpResponse response;
+            response.status = 200;
+            response.body = parsed.dump();
+            return response;
+        });
+
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+    const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
+
+    CHECK(response.ok);
+    CHECK(response.usage.prompt_cache_hit_tokens == 80);
+    CHECK(response.usage.prompt_cache_miss_tokens == 20);
 }
 
 TEST_CASE("returns transport error unchanged")

@@ -12,6 +12,7 @@
 #include "agent/hosts/cli/interactive_app.h"
 #include "agent/hosts/cli/platform_transport.h"
 #include "agent/model/openai_chat_model.h"
+#include "agent/plugins/metrics/metrics_collector.h"
 #include "agent/transport/http_transport.h"
 
 namespace
@@ -25,10 +26,11 @@ void PrintUsage()
               << "  agent-cli --version\n"
               << "  agent-cli --help\n"
               << "  agent-cli --init-config [--config <path>]\n"
-              << "  agent-cli --interactive [--config <path>]\n"
-              << "  agent-cli [--config <path>] <question...>\n"
+              << "  agent-cli --interactive [--stats] [--config <path>]\n"
+              << "  agent-cli [--stats] [--config <path>] <question...>\n"
               << "\n"
-              << "--interactive 进入终端聊天模式（输入 /help 查看命令）。\n"
+              << "--interactive 进入终端聊天模式（输入 /help 查看命令，/stats 查看统计）。\n"
+              << "--stats 在交互模式下每轮自动打印 token/速度/缓存/上下文/预计费用；单轮模式打印一次。\n"
               << "\n"
               << "未指定 --config 时加载：\n"
               << "  共享配置 config.json（当前目录，其次 exe 同目录）\n"
@@ -135,11 +137,18 @@ int main(int argc, char** argv)
     model_config.api_key = api_key;
     model_config.timeout_ms = config.timeout_ms;
     agent::model::OpenAiChatModel model(*transport, model_config);
+    const agent::plugins::metrics::CostEstimator cost_estimator =
+        config.cost_currency == "USD" ? agent::plugins::metrics::CostEstimator::DeepSeekUsdDefaults()
+                                      : agent::plugins::metrics::CostEstimator::DeepSeekCnyDefaults();
+    agent::plugins::metrics::MetricsCollector metrics(config.provider, 1000000, cost_estimator);
+    const bool interactive = options.mode == agent::hosts::cli::CliMode::Interactive;
+    agent::plugins::metrics::MetricsCollector* metrics_ptr = (interactive || options.stats) ? &metrics : nullptr;
 
-    if (options.mode == agent::hosts::cli::CliMode::Interactive)
+    if (interactive)
     {
-        return agent::hosts::cli::RunInteractive(model, config, std::cin, std::cout, std::cerr);
+        return agent::hosts::cli::RunInteractive(model, config, std::cin, std::cout, std::cerr, metrics_ptr,
+                                                 options.stats);
     }
 
-    return agent::hosts::cli::RunCli(options.question, model, config, std::cout, std::cerr);
+    return agent::hosts::cli::RunCli(options.question, model, config, std::cout, std::cerr, metrics_ptr);
 }

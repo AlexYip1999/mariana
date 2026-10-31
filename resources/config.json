@@ -1,4 +1,6 @@
 {
+  "provider": "deepseek",
+  "cost_currency": "CNY",
   "endpoint": "https://api.deepseek.com/chat/completions",
   "model": "deepseek-flash",
   "api_key_env": "DEEPSEEK_API_KEY",

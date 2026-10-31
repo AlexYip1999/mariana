@@ -20,6 +20,7 @@ struct CliOptions
     CliMode mode = CliMode::Chat;
     std::string config_path;
     std::vector<std::string> question;
+    bool stats = false;
 };
 
 struct CliParseResult

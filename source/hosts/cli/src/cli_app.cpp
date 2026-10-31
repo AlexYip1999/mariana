@@ -3,6 +3,8 @@
 #include <ostream>
 #include <string>
 
+#include "agent/plugins/metrics/metrics_formatter.h"
+
 namespace agent::hosts::cli
 {
 
@@ -23,10 +25,18 @@ std::string JoinQuestion(const std::vector<std::string>& args)
     return question;
 }
 
+void PrintMetrics(const agent::plugins::metrics::MetricsCollector* metrics, std::ostream& err)
+{
+    if (metrics != nullptr)
+    {
+        err << agent::plugins::metrics::FormatMetricsLine(metrics->Snapshot()) << "\n";
+    }
+}
+
 } // namespace
 
 int RunCli(const std::vector<std::string>& args, core::ChatModel& chat_model, const CliConfig& config,
-           std::ostream& out, std::ostream& err)
+           std::ostream& out, std::ostream& err, agent::plugins::metrics::MetricsCollector* metrics)
 {
     if (args.empty())
     {
@@ -44,14 +54,26 @@ int RunCli(const std::vector<std::string>& args, core::ChatModel& chat_model, co
     }
     request.messages.push_back({core::ChatRole::User, JoinQuestion(args)});
 
+    if (metrics != nullptr)
+    {
+        metrics->OnTurnStart();
+        metrics->OnModelRequest(request);
+    }
+
     const core::ChatResponse response = chat_model.Chat(request);
+    if (metrics != nullptr)
+    {
+        metrics->OnModelResponse(response);
+    }
     if (!response.ok)
     {
         err << "error: " << response.error << "\n";
+        PrintMetrics(metrics, err);
         return 1;
     }
 
     out << response.content << "\n";
+    PrintMetrics(metrics, err);
     return 0;
 }
 

@@ -19,6 +19,12 @@ $env:DEEPSEEK_API_KEY = "..."
 # 交互式终端聊天（启动后直接输入，不需要把问题作为参数）
 .\build\vs2022\bin\Debug\agent-cli.exe --interactive
 # 命令：/help、/clear、/exit
+
+# 性能/费用统计
+# --stats：交互模式下每轮自动打印；单轮模式打印一次
+# /stats：交互模式下手动查看当前会话统计
+.\build\vs2022\bin\Debug\agent-cli.exe --stats --interactive
+.\build\vs2022\bin\Debug\agent-cli.exe --stats "用一句话介绍 C++20"
 ```
 
 ## 配置
@@ -42,7 +48,7 @@ DeepSeek 相关：
 - `model` 当前为 `deepseek-flash`（或 `deepseek-v4-pro`）；
 - API key 只从环境变量读，默认变量名 `DEEPSEEK_API_KEY`，可用 `api_key_env` 改名；**不要把 key 写进任何配置文件**，解析器会拒绝 `api_key` / `key` / `token` 字段。
 
-配置项：`endpoint`、`model`、`api_key_env`、`system_prompt`、`timeout_ms`、`max_tokens`、`temperature`。
+配置项：`provider`、`cost_currency`、`endpoint`、`model`、`api_key_env`、`system_prompt`、`timeout_ms`、`max_tokens`、`temperature`。
 
 ## 当前状态
 

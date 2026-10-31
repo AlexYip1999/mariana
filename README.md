@@ -87,7 +87,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 - 跨平台正式实现：把 `WinHttpTransport` 替换为 libcurl（接口不变，UE 宿主仍用 FHttpModule）
 - 之后进入 A2：工具注册表 + Agent 循环
 
-CLI 的配置与用法见 [`source/hosts/cli/README.md`](source/hosts/cli/README.md)，共享默认见 [`resources/config.json`](resources/config.json)，模板见 [`config.example.json`](config.example.json)。
+CLI 的配置与用法见 [`source/hosts/cli/README.md`](source/hosts/cli/README.md)，共享默认见 [`resources/config.json`](resources/config.json)。
 
 学习与构建节奏见工作区文档：`../Agent项目-学习与构建计划.md`、`../Agent项目-实施路径.md`。
 

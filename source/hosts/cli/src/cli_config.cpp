@@ -98,6 +98,22 @@ ConfigLoadResult ParseCliConfig(const std::string& json_text, const CliConfig& b
             }
         }
 
+        result.config.provider = parsed.value("provider", result.config.provider);
+        if (result.config.provider.empty())
+        {
+            result.ok = false;
+            result.error = "provider must not be empty";
+            return result;
+        }
+
+        result.config.cost_currency = parsed.value("cost_currency", result.config.cost_currency);
+        if (result.config.cost_currency != "CNY" && result.config.cost_currency != "USD")
+        {
+            result.ok = false;
+            result.error = "cost_currency must be CNY or USD";
+            return result;
+        }
+
         result.config.endpoint = parsed.value("endpoint", result.config.endpoint);
         result.config.model = parsed.value("model", result.config.model);
         result.config.api_key_env = parsed.value("api_key_env", result.config.api_key_env);
@@ -214,6 +230,8 @@ ConfigInitResult WriteDefaultCliConfigFile(const std::string& path)
 
     const CliConfig defaults;
     nlohmann::json config_json;
+    config_json["provider"] = defaults.provider;
+    config_json["cost_currency"] = defaults.cost_currency;
     config_json["endpoint"] = defaults.endpoint;
     config_json["model"] = defaults.model;
     config_json["api_key_env"] = defaults.api_key_env;

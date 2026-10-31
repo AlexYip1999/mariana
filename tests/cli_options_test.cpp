@@ -14,6 +14,15 @@ TEST_CASE("parses chat question")
     CHECK(result.options.question[1] == "world");
 }
 
+TEST_CASE("parses stats option")
+{
+    const agent::hosts::cli::CliParseResult result = agent::hosts::cli::ParseCliOptions({"--stats", "hello"});
+
+    CHECK(result.ok);
+    CHECK(result.options.stats);
+    CHECK(result.options.question.size() == 1);
+}
+
 TEST_CASE("parses interactive mode and config path")
 {
     const agent::hosts::cli::CliParseResult result =

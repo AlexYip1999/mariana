@@ -37,6 +37,11 @@ CliParseResult ParseCliOptions(const std::vector<std::string>& args)
             init_config = true;
             continue;
         }
+        if (!end_of_options && arg == "--stats")
+        {
+            result.options.stats = true;
+            continue;
+        }
         if (!end_of_options && (arg == "--interactive" || arg == "-i"))
         {
             interactive = true;

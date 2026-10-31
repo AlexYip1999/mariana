@@ -8,6 +8,8 @@ namespace agent::hosts::cli
 
 struct CliConfig
 {
+    std::string provider = "deepseek";
+    std::string cost_currency = "CNY";
     std::string endpoint = "https://api.deepseek.com/chat/completions";
     std::string model = "deepseek-flash";
     std::string api_key_env = "DEEPSEEK_API_KEY";

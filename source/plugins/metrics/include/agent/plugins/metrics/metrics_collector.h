@@ -1,0 +1,51 @@
+#pragma once
+
+#include <chrono>
+#include <cstdint>
+#include <functional>
+#include <string>
+
+#include "agent/core/chat_model.h"
+#include "agent/core/tracer.h"
+#include "agent/plugins/metrics/cost_estimator.h"
+#include "agent/plugins/metrics/metrics_snapshot.h"
+
+namespace agent::plugins::metrics
+{
+
+/// Tracer 插件：采集轮次、步数、token、缓存、速度、上下文占用和估算费用。
+class MetricsCollector : public agent::core::Tracer
+{
+  public:
+    using SteadyNow = std::function<std::chrono::steady_clock::time_point()>;
+    using SystemNow = std::function<std::chrono::system_clock::time_point()>;
+
+    explicit MetricsCollector(std::string provider = "deepseek", std::int64_t context_window_tokens = 1000000,
+                              CostEstimator cost_estimator = CostEstimator::DeepSeekCnyDefaults(),
+                              SteadyNow steady_now = {}, SystemNow system_now = {});
+
+    void OnTurnStart();
+    void OnModelRequest(const agent::core::ChatRequest& request) override;
+    void OnModelResponse(const agent::core::ChatResponse& response) override;
+    void OnToolCall(const agent::core::ToolCall& call) override;
+    void OnToolResult(const agent::core::ToolCall& call, const agent::core::ToolResult& result) override;
+
+    const MetricsSnapshot& Snapshot() const;
+
+  private:
+    void ApplyUsage(const agent::core::ChatResponse& response, double duration_seconds);
+    void ApplyCost(const agent::core::ChatUsage& usage);
+
+    std::string m_provider;
+    CostEstimator m_cost_estimator;
+    std::int64_t m_context_window_tokens = 1000000;
+    SteadyNow m_steady_now;
+    SystemNow m_system_now;
+
+    MetricsSnapshot m_snapshot;
+    std::chrono::steady_clock::time_point m_request_start{};
+    std::string m_request_model;
+    bool m_request_active = false;
+};
+
+} // namespace agent::plugins::metrics

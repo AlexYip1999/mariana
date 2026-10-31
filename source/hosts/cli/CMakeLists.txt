@@ -16,6 +16,7 @@ target_link_libraries(agent_cli_lib
         agent_core
         agent_model
         agent_transport
+        agent_metrics
     PRIVATE
         agent_third_party
 )

@@ -13,6 +13,7 @@
 #include "agent/hosts/cli/cli_config.h"
 #include "agent/hosts/cli/interactive_app.h"
 #include "agent/model/openai_chat_model.h"
+#include "agent/plugins/metrics/metrics_collector.h"
 #include "support/fake_http_transport.h"
 
 namespace
@@ -80,6 +81,24 @@ TEST_CASE("parses cli config overrides")
     CHECK(result.config.timeout_ms == 5000);
     CHECK(result.config.temperature == doctest::Approx(0.3));
     CHECK(result.config.api_key_env == "DEEPSEEK_API_KEY");
+    CHECK(result.config.provider == "deepseek");
+    CHECK(result.config.cost_currency == "CNY");
+}
+
+TEST_CASE("rejects empty provider")
+{
+    const agent::hosts::cli::ConfigLoadResult result = agent::hosts::cli::ParseCliConfig(R"({"provider":""})");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("provider") != std::string::npos);
+}
+
+TEST_CASE("rejects unsupported cost currency")
+{
+    const agent::hosts::cli::ConfigLoadResult result = agent::hosts::cli::ParseCliConfig(R"({"cost_currency":"EUR"})");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("cost_currency") != std::string::npos);
 }
 
 TEST_CASE("merges config over a base")
@@ -323,4 +342,43 @@ TEST_CASE("interactive chat keeps history and handles commands")
     CHECK(output.str().find("first reply") != std::string::npos);
     CHECK(output.str().find("second reply") != std::string::npos);
     CHECK(output.str().find("history cleared") != std::string::npos);
+}
+
+TEST_CASE("interactive reports metrics when enabled")
+{
+    FakeChatModel adapter;
+    adapter.replies = {"hello"};
+
+    agent::hosts::cli::CliConfig config;
+    config.system_prompt = "be brief";
+
+    std::istringstream input("hi\n/exit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    agent::plugins::metrics::MetricsCollector metrics;
+    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, &metrics, true);
+
+    CHECK(exit_code == 0);
+    CHECK(metrics.Snapshot().turns == 1);
+    CHECK(metrics.Snapshot().steps == 1);
+    CHECK(error.str().find("[stats]") != std::string::npos);
+}
+
+TEST_CASE("interactive stats command reports current session")
+{
+    FakeChatModel adapter;
+    adapter.replies = {"hello"};
+
+    agent::hosts::cli::CliConfig config;
+    config.system_prompt = "be brief";
+
+    std::istringstream input("hi\n/stats\n/exit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    agent::plugins::metrics::MetricsCollector metrics;
+    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, &metrics, false);
+
+    CHECK(exit_code == 0);
+    CHECK(metrics.Snapshot().turns == 1);
+    CHECK(output.str().find("[stats]") != std::string::npos);
 }

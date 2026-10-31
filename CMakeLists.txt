@@ -27,6 +27,7 @@ target_include_directories(agent_third_party INTERFACE
 add_subdirectory(source/core)
 add_subdirectory(source/adapters/transport)
 add_subdirectory(source/adapters/model)
+add_subdirectory(source/plugins/metrics)
 add_subdirectory(source/hosts/cli)
 
 option(AGENT_CORE_BUILD_TESTS "Build agent-core tests" ON)

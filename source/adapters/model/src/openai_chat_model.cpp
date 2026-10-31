@@ -1,5 +1,6 @@
 #include "agent/model/openai_chat_model.h"
 
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -44,6 +45,15 @@ std::string FormatHttpError(const agent::transport::HttpResponse& response)
         // 非 JSON 错误体：保留状态码即可。
     }
     return message;
+}
+
+std::int64_t ReadUsageInt(const nlohmann::json& usage, const char* key)
+{
+    if (!usage.contains(key) || !usage[key].is_number_integer())
+    {
+        return 0;
+    }
+    return usage[key].get<std::int64_t>();
 }
 
 } // namespace
@@ -114,6 +124,29 @@ core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
         {
             response.error = "response has no message content";
             return response;
+        }
+
+        if (parsed.contains("usage") && parsed["usage"].is_object())
+        {
+            const nlohmann::json& usage = parsed["usage"];
+            response.usage.prompt_tokens = ReadUsageInt(usage, "prompt_tokens");
+            response.usage.completion_tokens = ReadUsageInt(usage, "completion_tokens");
+            response.usage.total_tokens = ReadUsageInt(usage, "total_tokens");
+            response.usage.prompt_cache_hit_tokens = ReadUsageInt(usage, "prompt_cache_hit_tokens");
+            response.usage.prompt_cache_miss_tokens = ReadUsageInt(usage, "prompt_cache_miss_tokens");
+
+            // OpenAI 兼容接口把缓存命中放在 prompt_tokens_details.cached_tokens。
+            if (response.usage.prompt_cache_hit_tokens == 0 && usage.contains("prompt_tokens_details") &&
+                usage["prompt_tokens_details"].is_object())
+            {
+                response.usage.prompt_cache_hit_tokens = ReadUsageInt(usage["prompt_tokens_details"], "cached_tokens");
+            }
+            if (response.usage.prompt_cache_miss_tokens == 0 &&
+                response.usage.prompt_tokens > response.usage.prompt_cache_hit_tokens)
+            {
+                response.usage.prompt_cache_miss_tokens =
+                    response.usage.prompt_tokens - response.usage.prompt_cache_hit_tokens;
+            }
         }
 
         response.ok = true;

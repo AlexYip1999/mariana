@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -8,6 +9,16 @@
 
 namespace agent::core
 {
+
+/// 模型返回的 token 用量；具体字段由厂商适配器填充。
+struct ChatUsage
+{
+    std::int64_t prompt_tokens = 0;
+    std::int64_t completion_tokens = 0;
+    std::int64_t total_tokens = 0;
+    std::int64_t prompt_cache_hit_tokens = 0;
+    std::int64_t prompt_cache_miss_tokens = 0;
+};
 
 struct ChatRequest
 {
@@ -23,6 +34,7 @@ struct ChatResponse
     bool ok = false;
     std::string content;
     std::vector<ToolCall> tool_calls;
+    ChatUsage usage;
     std::string error;
 };
 
