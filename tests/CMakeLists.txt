@@ -1,5 +1,6 @@
 add_executable(agent_core_tests
     smoke_test.cpp
+    core_primitives_test.cpp
 )
 target_link_libraries(agent_core_tests PRIVATE agent_core agent_third_party)
 
@@ -10,7 +11,7 @@ target_include_directories(agent_transport_tests PRIVATE ${CMAKE_CURRENT_SOURCE_
 target_link_libraries(agent_transport_tests PRIVATE agent_transport agent_third_party)
 
 add_executable(agent_model_tests
-    openai_model_adapter_test.cpp
+    openai_chat_model_test.cpp
 )
 target_include_directories(agent_model_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(agent_model_tests PRIVATE agent_model agent_third_party)

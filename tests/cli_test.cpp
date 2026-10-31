@@ -12,7 +12,7 @@
 #include "agent/hosts/cli/cli_app.h"
 #include "agent/hosts/cli/cli_config.h"
 #include "agent/hosts/cli/interactive_app.h"
-#include "agent/model/openai_model_adapter.h"
+#include "agent/model/openai_chat_model.h"
 #include "support/fake_http_transport.h"
 
 namespace
@@ -47,7 +47,7 @@ agent::transport::HttpResponse MakeChatResponse(const std::string& content)
     return response;
 }
 
-class FakeModelAdapter : public agent::core::ModelAdapter
+class FakeChatModel : public agent::core::ChatModel
 {
   public:
     std::vector<agent::core::ChatRequest> requests;
@@ -243,7 +243,7 @@ TEST_CASE("runs a single question and prints content")
             return MakeChatResponse("hello");
         });
 
-    agent::model::OpenAiModelAdapter adapter(transport, MakeOpenAiConfig());
+    agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
     std::ostringstream out;
     std::ostringstream err;
     const int exit_code = agent::hosts::cli::RunCli({"hello"}, adapter, MakeCliConfig(), out, err);
@@ -271,7 +271,7 @@ TEST_CASE("reports model errors")
             return response;
         });
 
-    agent::model::OpenAiModelAdapter adapter(transport, MakeOpenAiConfig());
+    agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
     std::ostringstream out;
     std::ostringstream err;
     const int exit_code = agent::hosts::cli::RunCli({"hello"}, adapter, MakeCliConfig(), out, err);
@@ -283,7 +283,7 @@ TEST_CASE("reports model errors")
 TEST_CASE("rejects empty question")
 {
     agent::tests::FakeHttpTransport transport;
-    agent::model::OpenAiModelAdapter adapter(transport, MakeOpenAiConfig());
+    agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
     std::ostringstream out;
     std::ostringstream err;
     const int exit_code = agent::hosts::cli::RunCli({}, adapter, MakeCliConfig(), out, err);
@@ -295,7 +295,7 @@ TEST_CASE("rejects empty question")
 
 TEST_CASE("interactive chat keeps history and handles commands")
 {
-    FakeModelAdapter adapter;
+    FakeChatModel adapter;
     adapter.replies = {"first reply", "second reply"};
 
     agent::hosts::cli::CliConfig config;

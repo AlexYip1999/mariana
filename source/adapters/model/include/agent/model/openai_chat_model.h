@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "agent/core/model_adapter.h"
+#include "agent/core/chat_model.h"
 #include "agent/transport/http_transport.h"
 
 namespace agent::model
@@ -17,10 +17,10 @@ struct OpenAiConfig
 };
 
 /// OpenAI 兼容协议适配器（DeepSeek 也走这套），非流式 /chat/completions。
-class OpenAiModelAdapter : public agent::core::ModelAdapter
+class OpenAiChatModel : public agent::core::ChatModel
 {
   public:
-    OpenAiModelAdapter(agent::transport::HttpTransport& transport, OpenAiConfig config);
+    OpenAiChatModel(agent::transport::HttpTransport& transport, OpenAiConfig config);
 
     agent::core::ChatResponse Chat(const agent::core::ChatRequest& request) override;
 

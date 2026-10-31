@@ -25,7 +25,7 @@ std::string JoinQuestion(const std::vector<std::string>& args)
 
 } // namespace
 
-int RunCli(const std::vector<std::string>& args, core::ModelAdapter& model_adapter, const CliConfig& config,
+int RunCli(const std::vector<std::string>& args, core::ChatModel& chat_model, const CliConfig& config,
            std::ostream& out, std::ostream& err)
 {
     if (args.empty())
@@ -44,7 +44,7 @@ int RunCli(const std::vector<std::string>& args, core::ModelAdapter& model_adapt
     }
     request.messages.push_back({core::ChatRole::User, JoinQuestion(args)});
 
-    const core::ChatResponse response = model_adapter.Chat(request);
+    const core::ChatResponse response = chat_model.Chat(request);
     if (!response.ok)
     {
         err << "error: " << response.error << "\n";

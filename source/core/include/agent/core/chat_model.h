@@ -3,27 +3,17 @@
 #include <string>
 #include <vector>
 
+#include "agent/core/message.h"
+#include "agent/core/tool.h"
+
 namespace agent::core
 {
-
-enum class ChatRole
-{
-    System,
-    User,
-    Assistant,
-    Tool,
-};
-
-struct ChatMessage
-{
-    ChatRole role = ChatRole::User;
-    std::string content;
-};
 
 struct ChatRequest
 {
     std::string model;
     std::vector<ChatMessage> messages;
+    std::vector<ToolSpec> tools;
     double temperature = 0.0;
     int max_tokens = 1024;
 };
@@ -32,14 +22,15 @@ struct ChatResponse
 {
     bool ok = false;
     std::string content;
+    std::vector<ToolCall> tool_calls;
     std::string error;
 };
 
 /// 模型适配抽象：换模型 / 厂商不改 core。
-class ModelAdapter
+class ChatModel
 {
   public:
-    virtual ~ModelAdapter() = default;
+    virtual ~ChatModel() = default;
 
     virtual ChatResponse Chat(const ChatRequest& request) = 0;
 };

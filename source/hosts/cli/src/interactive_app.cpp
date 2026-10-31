@@ -28,8 +28,8 @@ void PrintHelp(std::ostream& out)
 
 } // namespace
 
-int RunInteractive(agent::core::ModelAdapter& model_adapter, const CliConfig& config, std::istream& in,
-                   std::ostream& out, std::ostream& err)
+int RunInteractive(agent::core::ChatModel& chat_model, const CliConfig& config, std::istream& in, std::ostream& out,
+                   std::ostream& err)
 {
     std::vector<core::ChatMessage> history;
     AppendSystemPrompt(history, config);
@@ -73,7 +73,7 @@ int RunInteractive(agent::core::ModelAdapter& model_adapter, const CliConfig& co
         request.max_tokens = config.max_tokens;
         request.messages = history;
 
-        const core::ChatResponse response = model_adapter.Chat(request);
+        const core::ChatResponse response = chat_model.Chat(request);
         if (!response.ok)
         {
             history.pop_back();

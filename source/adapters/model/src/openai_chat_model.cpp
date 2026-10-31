@@ -1,4 +1,4 @@
-#include "agent/model/openai_model_adapter.h"
+#include "agent/model/openai_chat_model.h"
 
 #include <string>
 #include <utility>
@@ -48,12 +48,12 @@ std::string FormatHttpError(const agent::transport::HttpResponse& response)
 
 } // namespace
 
-OpenAiModelAdapter::OpenAiModelAdapter(transport::HttpTransport& transport, OpenAiConfig config)
+OpenAiChatModel::OpenAiChatModel(transport::HttpTransport& transport, OpenAiConfig config)
     : m_transport(transport), m_config(std::move(config))
 {
 }
 
-core::ChatResponse OpenAiModelAdapter::Chat(const core::ChatRequest& request)
+core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
 {
     core::ChatResponse response;
     if (m_config.api_key.empty())

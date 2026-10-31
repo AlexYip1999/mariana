@@ -90,7 +90,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 
 - 函数/方法用 PascalCase，变量/参数/成员用 snake_case；不要用小驼峰命名函数（`processData` 不行）。
 - 缩写按单词处理：类型 `HttpClient`，函数 `ParseHttpResponse`。
-- **接口不加 `I` 前缀**：抽象基类用角色名，具体实现加实现名。例如 `HttpTransport` → `CurlHttpTransport` / `UeHttpTransport`；`ModelAdapter` → `OpenAiModelAdapter`。文件名与类名一致（`http_transport.h`）。
+- **接口不加 `I` 前缀**：抽象基类用角色名，具体实现加实现名。例如 `HttpTransport` → `CurlHttpTransport` / `UeHttpTransport`；`ChatModel` → `OpenAiChatModel`。文件名与类名一致（`http_transport.h`）。
 - clang-format 只负责排版，**不检查命名**；命名靠评审与这条规则约束。
 - 不要引入 UE 宏风格（`UPROPERTY` 等属于 UE 宿主层，core 层禁止）。
 

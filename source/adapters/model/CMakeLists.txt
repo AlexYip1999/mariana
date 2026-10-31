@@ -1,5 +1,5 @@
 add_library(agent_model
-    src/openai_model_adapter.cpp
+    src/openai_chat_model.cpp
 )
 
 target_include_directories(agent_model

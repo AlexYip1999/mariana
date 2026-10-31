@@ -4,14 +4,14 @@
 #include <string>
 #include <vector>
 
-#include "agent/core/model_adapter.h"
+#include "agent/core/chat_model.h"
 #include "agent/core/version.h"
 #include "agent/hosts/cli/cli_app.h"
 #include "agent/hosts/cli/cli_config.h"
 #include "agent/hosts/cli/cli_options.h"
 #include "agent/hosts/cli/interactive_app.h"
 #include "agent/hosts/cli/platform_transport.h"
-#include "agent/model/openai_model_adapter.h"
+#include "agent/model/openai_chat_model.h"
 #include "agent/transport/http_transport.h"
 
 namespace
@@ -134,12 +134,12 @@ int main(int argc, char** argv)
     model_config.model = config.model;
     model_config.api_key = api_key;
     model_config.timeout_ms = config.timeout_ms;
-    agent::model::OpenAiModelAdapter adapter(*transport, model_config);
+    agent::model::OpenAiChatModel model(*transport, model_config);
 
     if (options.mode == agent::hosts::cli::CliMode::Interactive)
     {
-        return agent::hosts::cli::RunInteractive(adapter, config, std::cin, std::cout, std::cerr);
+        return agent::hosts::cli::RunInteractive(model, config, std::cin, std::cout, std::cerr);
     }
 
-    return agent::hosts::cli::RunCli(options.question, adapter, config, std::cout, std::cerr);
+    return agent::hosts::cli::RunCli(options.question, model, config, std::cout, std::cerr);
 }

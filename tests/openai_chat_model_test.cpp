@@ -3,7 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "agent/model/openai_model_adapter.h"
+#include "agent/model/openai_chat_model.h"
 #include "support/fake_http_transport.h"
 
 namespace
@@ -65,7 +65,7 @@ TEST_CASE("builds OpenAI-compatible request and parses content")
             return response;
         });
 
-    agent::model::OpenAiModelAdapter adapter(transport, MakeConfig());
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
     const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
 
     CHECK(response.ok);
@@ -98,7 +98,7 @@ TEST_CASE("returns transport error unchanged")
             return response;
         });
 
-    agent::model::OpenAiModelAdapter adapter(transport, MakeConfig());
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
     const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
 
     CHECK_FALSE(response.ok);
@@ -119,7 +119,7 @@ TEST_CASE("reports HTTP status and error message")
             return response;
         });
 
-    agent::model::OpenAiModelAdapter adapter(transport, MakeConfig());
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
     const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
 
     CHECK_FALSE(response.ok);
@@ -139,7 +139,7 @@ TEST_CASE("rejects invalid JSON response")
             return response;
         });
 
-    agent::model::OpenAiModelAdapter adapter(transport, MakeConfig());
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
     const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
 
     CHECK_FALSE(response.ok);
@@ -151,7 +151,7 @@ TEST_CASE("rejects empty API key before sending")
     agent::tests::FakeHttpTransport transport;
     agent::model::OpenAiConfig config = MakeConfig();
     config.api_key.clear();
-    agent::model::OpenAiModelAdapter adapter(transport, config);
+    agent::model::OpenAiChatModel adapter(transport, config);
 
     const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
 

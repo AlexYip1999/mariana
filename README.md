@@ -12,7 +12,7 @@
 | `source/core/` | 引擎无关核心：`include/agent/` 公共 API + `src/` 实现 |
 | `source/adapters/` | 平台 / 协议适配器（transport、model 已定义；storage 待建） |
 | `source/adapters/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
-| `source/adapters/model/` | 模型层：`ModelAdapter` 接口在 core，`OpenAiModelAdapter` 在 adapters |
+| `source/adapters/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 adapters |
 | `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮问答） |
 | `tests/` | 单元测试（doctest） |
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
@@ -75,6 +75,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 - `resources/config.json`（提交到仓库）：共享默认值，不含密钥；构建时复制到 exe 同目录；
 - `config.local.json`（gitignore）：本机覆盖，只写需要改的字段，字段级覆盖 shared；
 - 内置默认值兜底；`--config <path>` 显式指定时只加载该文件；
+
+## 设计文档
+
+- [Agent 循环（A2）设计草案](docs/agent-loop-design.md)
+- [安全与密钥管理](docs/security.md)
 
 ## 下一步（对应学习计划 U1）
 
