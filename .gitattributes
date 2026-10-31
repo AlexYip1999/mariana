@@ -1,0 +1,12 @@
+* text=auto
+
+*.hpp text
+*.h text
+*.cpp text
+*.md text
+*.json text
+*.yml text
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+third_party/** linguist-vendored

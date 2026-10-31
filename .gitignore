@@ -1,0 +1,29 @@
+# Build
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Runtime artifacts
+traces/
+logs/
+*.trace.jsonl
+config.local.json
+.env
+.env.*
+
+# Python (learning experiments later)
+.venv/
+__pycache__/
+*.pyc
+
+# OS
+Thumbs.db
+Desktop.ini
