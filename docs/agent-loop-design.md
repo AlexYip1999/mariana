@@ -387,6 +387,41 @@ class ContextProvider
 
 所以插件化解决“能力怎么接”，执行器/Flow 解决“流程怎么编排”，两者互补。
 
+### 5.8 MCP：远程工具插件协议
+
+MCP（Model Context Protocol）**本身不是单个 Tool**，而是“能力发现 + 调用”的协议。一个 MCP server 可以暴露：
+
+- tools
+- resources
+- prompts
+
+映射到我们的分层：
+
+| MCP 概念 | 我们的对应 |
+|---|---|
+| MCP server | 远程插件/能力提供方 |
+| MCP tool | 一个 `McpTool`，实现 `Tool` 接口 |
+| MCP resource | `ContextProvider` |
+| MCP prompt | `AgentProfile` / Prompt 模板 |
+| MCP client / transport | `source/plugins/mcp`，负责连接/认证/JSON-RPC |
+
+所以 agent 看到的是 `read_file`、`search_web` 这些独立工具，而不是一个叫 `mcp` 的大工具。
+
+```text
+MCP server
+  ├── tool: read_file   → McpTool("read_file")
+  ├── tool: search_web  → McpTool("search_web")
+  └── resource: docs    → McpContextProvider
+```
+
+约束：
+
+- `McpTool` 实现 `Tool` 契约，`Execute()` 内部调用 MCP `tools/call`；
+- `ToolSpec.parameters_json` 来自 MCP tool 的 `inputSchema`；
+- `McpClient`、连接管理、认证不进入 core；
+- MCP 工具是远程不可信能力，需要 allowlist、超时、结果截断和 prompt injection 防护；
+- **A2 不实现 MCP**；当前 `Tool` 接口已经足够以后接 `McpTool`。
+
 ## 6. OpenAI / DeepSeek 协议
 
 请求体在 A1 基础上增加：
@@ -517,6 +552,7 @@ traces/
 | 执行策略插件 | `AgentExecutor` 接口；`AgentRunner` 是默认 ReAct 实现 |
 | 低代码 Flow | 原语稳定后，以节点/端口/上下文 schema 为基础单独做 |
 | 应用上下文 | `ContextProvider` 接口；Profile 选择 provider |
+| MCP 远程工具 | 每个 MCP tool 对应一个 `McpTool`；McpClient/连接管理放 `source/plugins/mcp` |
 | 异步 ReAct | `AgentRunner::Step()` 与循环驱动分离，未来用事件队列调用 Step |
 | Router / Worker | `Conversation` + `AgentExecutor` 可实例化多个，Router 负责分配 |
 | 多会话 | Conversation 可序列化、带 session_id |
@@ -532,6 +568,8 @@ traces/
 - `AgentRunner` 定位为默认 ReAct 执行器，未来通过 `AgentExecutor` 接口替换；
 - 不同应用（引擎助手/NPC/自动化/知识问答）使用不同上下文结构和 Flow；
 - 低代码 Flow 是上层产品形态，依赖稳定原语后再做；
+- Tool 属于插件能力层，`Tool` 接口在 core，`ToolRegistry` 在 agent 层；
+- MCP 是远程工具插件协议，不是单个 Tool；每个 MCP tool 以后映射为一个 `McpTool`；
 - 方向与 DeepSeek 的插件化 + 编排/执行分离一致。
 
 ### 待确认决策

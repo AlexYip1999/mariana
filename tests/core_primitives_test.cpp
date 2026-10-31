@@ -148,6 +148,27 @@ TEST_CASE("fake tool implements the tool interface")
     CHECK(tool.m_last_arguments == R"({"path":"x"})");
 }
 
+TEST_CASE("tool spec is built from tool metadata")
+{
+    FakeTool tool;
+    const agent::core::ToolSpec spec = tool.Spec();
+
+    CHECK(spec.name == "fake_tool");
+    CHECK(spec.description == "fake tool");
+    CHECK_FALSE(spec.parameters_json.empty());
+}
+
+TEST_CASE("validates tool names")
+{
+    CHECK(agent::core::IsValidToolName("read_file"));
+    CHECK(agent::core::IsValidToolName("read-file"));
+    CHECK(agent::core::IsValidToolName("Tool123"));
+    CHECK_FALSE(agent::core::IsValidToolName(""));
+    CHECK_FALSE(agent::core::IsValidToolName("read file"));
+    CHECK_FALSE(agent::core::IsValidToolName("read.file"));
+    CHECK_FALSE(agent::core::IsValidToolName(std::string(65, 'a')));
+}
+
 TEST_CASE("context provider returns application context")
 {
     FakeContextProvider provider;

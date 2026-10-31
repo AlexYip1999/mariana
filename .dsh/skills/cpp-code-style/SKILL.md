@@ -1,6 +1,6 @@
 ---
 name: cpp-code-style
-description: 用于在 agent-core 项目中新增、修改、评审或提交 C++ 代码时。强制项目代码规范：Allman 大括号（右大括号必须独占一行）、PascalCase 命名（类型/函数）、snake_case 命名（变量/文件，成员变量 m_ 前缀）、4 空格缩进、120 列，并在改完代码后运行 scripts/format.ps1、scripts/check-format.ps1、scripts/verify.ps1。任何 .h/.hpp/.cpp 改动后都必须使用。
+description: 用于在 agent-core 项目中新增、修改、评审或提交 C++ 代码时。强制项目代码规范：Allman 大括号（右大括号必须独占一行）、PascalCase 命名（类型/函数）、snake_case 命名（变量/文件，成员变量 m_ 前缀）、长布尔条件必须抽成命名函数、4 空格缩进、120 列，并在改完代码后运行 scripts/format.ps1、scripts/check-format.ps1、scripts/verify.ps1。任何 .h/.hpp/.cpp 改动后都必须使用。
 ---
 
 # C++ 代码规范（agent-core）
@@ -20,6 +20,34 @@ description: 用于在 agent-core 项目中新增、修改、评审或提交 C++
 2. **左大括号同样换行**（Allman）。大括号位置由 `.clang-format` 决定，不要手调。
 3. 缩进 4 空格、不使用 Tab、行宽 120。
 4. 格式以 `clang-format` 的结果为准，不要凭感觉"看起来对齐"。
+5. **长布尔条件必须抽成命名函数**，不要在 `if` / `while` / 三元表达式里堆长条件。
+   - 触发条件：条件跨多行、混合 `&&` / `||` 超过 2～3 个，或需要注释才能看懂含义；
+   - 简单单条件（如 `if (name.empty())`）不必抽；
+   - 抽成 `Is...` / `Has...` / `Can...` 的 PascalCase 函数，名字表达业务语义，不要用 `CheckCondition()`；
+   - 纯判断函数优先 `inline` 放头文件，或放 `.cpp` 的匿名命名空间；
+   - 例：
+
+```cpp
+// 不好：条件难读，且无法复用
+if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')
+{
+    // ...
+}
+
+// 好：抽成命名函数
+namespace detail
+{
+inline bool IsToolNameCharacter(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+}
+} // namespace detail
+
+if (!detail::IsToolNameCharacter(c))
+{
+    return false;
+}
+```
 
 初始化列表正确写法：
 
@@ -107,5 +135,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 - [ ] `scripts/verify.ps1` 通过（或格式、构建、测试分别通过）
 - [ ] 块级 `}` 和多行初始化列表的 `}` 都在行首（单行语句 / `return {};` 除外）
 - [ ] 命名符合规范：类型/函数 PascalCase，变量/文件 snake_case，成员变量 `m_` 前缀
+- [ ] 长布尔条件已抽成命名函数（`Is...` / `Has...` / `Can...`）
 - [ ] `third_party/`、`build/` 未被改动
 - [ ] `git status` 无意外文件

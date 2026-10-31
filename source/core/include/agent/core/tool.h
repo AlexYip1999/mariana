@@ -21,6 +21,34 @@ struct ToolResult
     std::string error;
 };
 
+namespace detail
+{
+
+inline bool IsToolNameCharacter(char c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+}
+
+} // namespace detail
+
+/// OpenAI / DeepSeek 的 function name 约束：字母、数字、下划线、短横线，最长 64。
+inline bool IsValidToolName(const std::string& name)
+{
+    if (name.empty() || name.size() > 64)
+    {
+        return false;
+    }
+
+    for (char c : name)
+    {
+        if (!detail::IsToolNameCharacter(c))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 /// 工具抽象：具体工具（读文件、查文档、编辑器操作）由宿主或 tools 层实现。
 class Tool
 {
@@ -31,6 +59,12 @@ class Tool
     virtual std::string Description() const = 0;
     virtual std::string ParametersJson() const = 0;
     virtual ToolResult Execute(const std::string& arguments_json) = 0;
+
+    /// 由工具元数据生成 ToolSpec，避免每个调用方重复拼装。
+    ToolSpec Spec() const
+    {
+        return ToolSpec{Name(), Description(), ParametersJson()};
+    }
 };
 
 } // namespace agent::core
