@@ -15,6 +15,10 @@
 # 单轮问答（需要 DEEPSEEK_API_KEY）
 $env:DEEPSEEK_API_KEY = "..."
 .\build\vs2022\bin\Debug\agent-cli.exe "用一句话介绍 C++20"
+
+# 交互式终端聊天（启动后直接输入，不需要把问题作为参数）
+.\build\vs2022\bin\Debug\agent-cli.exe --interactive
+# 命令：/help、/clear、/exit
 ```
 
 ## 配置

@@ -17,6 +17,7 @@ target_link_libraries(agent_model_tests PRIVATE agent_model agent_third_party)
 
 add_executable(agent_cli_tests
     cli_test.cpp
+    cli_options_test.cpp
 )
 target_include_directories(agent_cli_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(agent_cli_tests PRIVATE agent_cli_lib agent_third_party)

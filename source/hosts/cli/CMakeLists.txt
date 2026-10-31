@@ -1,6 +1,8 @@
 add_library(agent_cli_lib
     src/cli_app.cpp
     src/cli_config.cpp
+    src/cli_options.cpp
+    src/interactive_app.cpp
     src/platform_transport.cpp
 )
 

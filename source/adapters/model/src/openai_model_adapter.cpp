@@ -75,7 +75,6 @@ core::ChatResponse OpenAiModelAdapter::Chat(const core::ChatRequest& request)
 
     transport::HttpRequest http_request;
     http_request.url = m_config.endpoint;
-    http_request.body = body.dump();
     http_request.headers = {
         {
             "Content-Type",
@@ -86,6 +85,7 @@ core::ChatResponse OpenAiModelAdapter::Chat(const core::ChatRequest& request)
             "Bearer " + m_config.api_key,
         },
     };
+    http_request.body = body.dump();
     http_request.timeout_ms = m_config.timeout_ms;
 
     const transport::HttpResponse http_response = m_transport.PostJson(http_request);

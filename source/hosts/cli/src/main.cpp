@@ -8,6 +8,8 @@
 #include "agent/core/version.h"
 #include "agent/hosts/cli/cli_app.h"
 #include "agent/hosts/cli/cli_config.h"
+#include "agent/hosts/cli/cli_options.h"
+#include "agent/hosts/cli/interactive_app.h"
 #include "agent/hosts/cli/platform_transport.h"
 #include "agent/model/openai_model_adapter.h"
 #include "agent/transport/http_transport.h"
@@ -23,7 +25,10 @@ void PrintUsage()
               << "  agent-cli --version\n"
               << "  agent-cli --help\n"
               << "  agent-cli --init-config [--config <path>]\n"
+              << "  agent-cli --interactive [--config <path>]\n"
               << "  agent-cli [--config <path>] <question...>\n"
+              << "\n"
+              << "--interactive 进入终端聊天模式（输入 /help 查看命令）。\n"
               << "\n"
               << "未指定 --config 时加载：\n"
               << "  共享配置 config.json（当前目录，其次 exe 同目录）\n"
@@ -38,53 +43,32 @@ void PrintUsage()
 int main(int argc, char** argv)
 {
     const std::string executable_path = (argc > 0) ? argv[0] : std::string();
-    std::string config_path;
-    bool init_config = false;
-    std::vector<std::string> args;
+
+    std::vector<std::string> raw_args;
     for (int i = 1; i < argc; ++i)
     {
-        const std::string arg = argv[i];
-        if (arg == "--config")
-        {
-            if (i + 1 >= argc)
-            {
-                std::cerr << "--config requires a path\n";
-                return 2;
-            }
-            config_path = argv[++i];
-            continue;
-        }
-        if (arg == "--init-config")
-        {
-            init_config = true;
-            continue;
-        }
-        args.push_back(arg);
+        raw_args.emplace_back(argv[i]);
     }
 
-    for (const std::string& arg : args)
+    const agent::hosts::cli::CliParseResult parsed = agent::hosts::cli::ParseCliOptions(raw_args);
+    if (!parsed.ok)
     {
-        if (arg == "--version" || arg == "-v")
-        {
-            std::cout << agent::core::Version() << "\n";
-            return 0;
-        }
-        if (arg == "--help" || arg == "-h")
-        {
-            PrintUsage();
-            return 0;
-        }
+        std::cerr << parsed.error << "\n";
+        return 2;
     }
 
-    if (init_config)
+    const agent::hosts::cli::CliOptions& options = parsed.options;
+    switch (options.mode)
     {
-        if (!args.empty())
-        {
-            std::cerr << "--init-config cannot be combined with a question\n";
-            return 2;
-        }
-
-        const std::string target = config_path.empty() ? "config.local.json" : config_path;
+    case agent::hosts::cli::CliMode::Help:
+        PrintUsage();
+        return 0;
+    case agent::hosts::cli::CliMode::Version:
+        std::cout << agent::core::Version() << "\n";
+        return 0;
+    case agent::hosts::cli::CliMode::InitConfig:
+    {
+        const std::string target = options.config_path.empty() ? "config.local.json" : options.config_path;
         const agent::hosts::cli::ConfigInitResult result = agent::hosts::cli::WriteDefaultCliConfigFile(target);
         if (!result.ok)
         {
@@ -94,11 +78,15 @@ int main(int argc, char** argv)
         std::cout << "created " << result.path << "\n";
         return 0;
     }
+    case agent::hosts::cli::CliMode::Interactive:
+    case agent::hosts::cli::CliMode::Chat:
+        break;
+    }
 
     agent::hosts::cli::CliConfig config;
-    if (!config_path.empty())
+    if (!options.config_path.empty())
     {
-        const agent::hosts::cli::ConfigLoadResult loaded = agent::hosts::cli::LoadCliConfigFile(config_path);
+        const agent::hosts::cli::ConfigLoadResult loaded = agent::hosts::cli::LoadCliConfigFile(options.config_path);
         if (!loaded.ok)
         {
             std::cerr << "config error: " << loaded.error << "\n";
@@ -148,5 +136,10 @@ int main(int argc, char** argv)
     model_config.timeout_ms = config.timeout_ms;
     agent::model::OpenAiModelAdapter adapter(*transport, model_config);
 
-    return agent::hosts::cli::RunCli(args, adapter, config, std::cout, std::cerr);
+    if (options.mode == agent::hosts::cli::CliMode::Interactive)
+    {
+        return agent::hosts::cli::RunInteractive(adapter, config, std::cin, std::cout, std::cerr);
+    }
+
+    return agent::hosts::cli::RunCli(options.question, adapter, config, std::cout, std::cerr);
 }

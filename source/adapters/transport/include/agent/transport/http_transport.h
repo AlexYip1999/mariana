@@ -11,8 +11,8 @@ namespace agent::transport
 struct HttpRequest
 {
     std::string url;
-    std::string body;
     std::vector<std::pair<std::string, std::string>> headers;
+    std::string body;
     int timeout_ms = 30000;
 };
 

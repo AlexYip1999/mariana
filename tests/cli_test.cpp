@@ -7,9 +7,11 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "agent/hosts/cli/cli_app.h"
 #include "agent/hosts/cli/cli_config.h"
+#include "agent/hosts/cli/interactive_app.h"
 #include "agent/model/openai_model_adapter.h"
 #include "support/fake_http_transport.h"
 
@@ -44,6 +46,26 @@ agent::transport::HttpResponse MakeChatResponse(const std::string& content)
     response.body = parsed.dump();
     return response;
 }
+
+class FakeModelAdapter : public agent::core::ModelAdapter
+{
+  public:
+    std::vector<agent::core::ChatRequest> requests;
+    std::vector<std::string> replies;
+
+    agent::core::ChatResponse Chat(const agent::core::ChatRequest& request) override
+    {
+        requests.push_back(request);
+        agent::core::ChatResponse response;
+        response.ok = true;
+        if (!replies.empty())
+        {
+            response.content = replies.front();
+            replies.erase(replies.begin());
+        }
+        return response;
+    }
+};
 
 } // namespace
 
@@ -269,4 +291,36 @@ TEST_CASE("rejects empty question")
     CHECK(exit_code == 2);
     CHECK(err.str().find("usage") != std::string::npos);
     CHECK(transport.RequestCount() == 0);
+}
+
+TEST_CASE("interactive chat keeps history and handles commands")
+{
+    FakeModelAdapter adapter;
+    adapter.replies = {"first reply", "second reply"};
+
+    agent::hosts::cli::CliConfig config;
+    config.system_prompt = "be brief";
+
+    std::istringstream input("hello\nworld\n/clear\nafter clear\n/exit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error);
+
+    CHECK(exit_code == 0);
+    CHECK(adapter.requests.size() == 3);
+
+    CHECK(adapter.requests[0].messages.size() == 2);
+    CHECK(adapter.requests[0].messages[0].role == agent::core::ChatRole::System);
+    CHECK(adapter.requests[0].messages[1].role == agent::core::ChatRole::User);
+
+    CHECK(adapter.requests[1].messages.size() == 4);
+    CHECK(adapter.requests[1].messages[2].role == agent::core::ChatRole::Assistant);
+    CHECK(adapter.requests[1].messages[2].content == "first reply");
+
+    CHECK(adapter.requests[2].messages.size() == 2);
+    CHECK(adapter.requests[2].messages[1].content == "after clear");
+
+    CHECK(output.str().find("first reply") != std::string::npos);
+    CHECK(output.str().find("second reply") != std::string::npos);
+    CHECK(output.str().find("history cleared") != std::string::npos);
 }
