@@ -24,6 +24,7 @@
 - 敏感文件拒绝（启发式，不是完整防护）：`.env` / `.env.*`、`config.local.json`、`.git`、`.docker`、`.kube`、`id_rsa` / `id_ed25519` / `id_ecdsa`、`.git-credentials`、`.netrc`、`.npmrc`、`.pypirc`、`.htpasswd`、`*.key` / `*.pem` / `*.pfx` / `*.p12` / `*.jks` / `*.ppk` / `*.kdbx`。
 - 单文件有读取上限，且只接受 UTF-8 文本；二进制/GBK/UTF-16 会返回错误。
 - 工具结果进入模型上下文后视为不可信内容；文件里的“忽略之前指令”等 prompt injection 可能影响模型决策，不能作为授权依据。
+- `--trace` 写文件前会截断内容并脱敏 `sk-...`；仍应把 trace 目录视为可能含敏感业务数据。
 - 不要把 workspace 指向 HOME、仓库根或包含凭据的目录；敏感目录只应通过显式 workspace 白名单开放。
 
 ## 配置信任边界

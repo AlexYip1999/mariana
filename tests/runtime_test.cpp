@@ -356,6 +356,36 @@ TEST_CASE("agent runner converts hook exceptions to errors")
     CHECK(conversation.messages.empty());
 }
 
+TEST_CASE("agent runner trims old conversation to context budget")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "done";
+
+    agent::runtime::AgentRunner runner(model, nullptr);
+    agent::runtime::AgentProfile profile;
+    profile.max_steps = 1;
+    profile.max_context_chars = 2500;
+
+    agent::core::Conversation conversation;
+    conversation.Append(agent::core::ChatRole::System, "system");
+    for (int index = 0; index < 10; ++index)
+    {
+        conversation.Append(agent::core::ChatRole::User, std::string(1000, 'u'));
+        conversation.Append(agent::core::ChatRole::Assistant, std::string(1000, 'a'));
+    }
+
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "latest");
+
+    CHECK(result.ok);
+    REQUIRE(model.requests.size() == 1);
+    const std::vector<agent::core::ChatMessage>& messages = model.requests[0].messages;
+    CHECK(messages.front().role == agent::core::ChatRole::System);
+    CHECK(messages.back().content == "latest");
+    CHECK(messages.size() < conversation.messages.size());
+    CHECK(messages.size() >= 2);
+}
+
 TEST_CASE("agent runner stops at max steps and keeps messages")
 {
     FakeChatModel model;

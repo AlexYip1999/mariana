@@ -8,6 +8,7 @@
   "timeout_ms": 30000,
   "max_tokens": 1024,
   "temperature": 0.0,
+  "max_context_chars": 120000,
   "tool_names": [
     "read_file"
   ]

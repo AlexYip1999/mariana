@@ -26,6 +26,10 @@ $env:DEEPSEEK_API_KEY = "..."
 .\build\vs2022\bin\Debug\agent-cli.exe --workspace .\project "读取 README"
 .\build\vs2022\bin\Debug\agent-cli.exe --no-tools "纯聊天，不允许工具"
 
+# JSONL trace
+.\build\vs2022\bin\Debug\agent-cli.exe --trace "读取 README"
+.\build\vs2022\bin\Debug\agent-cli.exe --trace-dir .\traces "读取 README"
+
 # 性能/费用统计
 # --stats：交互模式下每轮自动打印；单轮模式打印一次
 # /stats：交互模式下手动查看当前会话统计
@@ -74,7 +78,7 @@ DeepSeek 相关：
 - `model` 当前为 `deepseek-flash`（或 `deepseek-v4-pro`）；
 - API key 只从环境变量读，默认变量名 `DEEPSEEK_API_KEY`，可用 `api_key_env` 改名；**不要把 key 写进任何配置文件**，解析器会拒绝 `api_key` / `key` / `token` 字段。
 
-配置项：`provider`、`cost_currency`、`endpoint`、`model`、`api_key_env`、`system_prompt`、`timeout_ms`、`max_tokens`、`temperature`、`tool_names`。
+配置项：`provider`、`cost_currency`、`endpoint`、`model`、`api_key_env`、`system_prompt`、`timeout_ms`、`max_tokens`、`temperature`、`max_context_chars`、`tool_names`。
 
 ## 当前状态
 
@@ -82,5 +86,7 @@ DeepSeek 相关：
 - 组合根抽为 `RunHost(args, HostEnvironment&, in/out/err)`：`HostEnvironment` 注入 env、当前目录、transport；`main` 只做控制台/参数 OS 适配；
 - 组合根构造 `AgentRunner`，通过 `AgentExecutor&` 注入 `RunCli`/`RunInteractive`；
 - 工具链路有 FakeHttpTransport 的端到端测试（tool_calls → read_file → role=tool → final）；
+- `--trace` / `--trace-dir` 写入 JSONL（turn/model/tool/usage，内容截断与 key 脱敏）；
+- `max_context_chars` 控制发送给模型的 conversation 字符预算；
 - **Windows 已接入临时 `WinHttpTransport`**，可以直接真实调用（需要可用网络和 API key）；
 - 跨平台正式实现待换成 libcurl；UE 宿主会用 `FHttpModule` 单独实现 `HttpTransport`。

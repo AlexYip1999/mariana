@@ -137,6 +137,7 @@ ConfigLoadResult ParseCliConfig(const std::string& json_text, const CliConfig& b
         result.config.timeout_ms = parsed.value("timeout_ms", result.config.timeout_ms);
         result.config.max_tokens = parsed.value("max_tokens", result.config.max_tokens);
         result.config.temperature = parsed.value("temperature", result.config.temperature);
+        result.config.max_context_chars = parsed.value("max_context_chars", result.config.max_context_chars);
 
         if (parsed.contains("tool_names"))
         {
@@ -277,6 +278,7 @@ ConfigInitResult WriteDefaultCliConfigFile(const std::string& path)
     config_json["timeout_ms"] = defaults.timeout_ms;
     config_json["max_tokens"] = defaults.max_tokens;
     config_json["temperature"] = defaults.temperature;
+    config_json["max_context_chars"] = defaults.max_context_chars;
     config_json["tool_names"] = defaults.tool_names;
 
     std::ofstream file(path);

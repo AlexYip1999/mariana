@@ -122,6 +122,74 @@ std::string LimitToolOutput(std::string content, std::size_t& used_bytes)
     return content;
 }
 
+std::size_t EstimateMessageChars(const core::ChatMessage& message)
+{
+    std::size_t total = message.content.size() + message.tool_call_id.size();
+    for (const core::ToolCall& call : message.tool_calls)
+    {
+        total += call.id.size() + call.name.size() + call.arguments_json.size();
+    }
+    return total;
+}
+
+std::size_t EstimateMessagesChars(const std::vector<core::ChatMessage>& messages, std::size_t start)
+{
+    std::size_t total = 0;
+    for (std::size_t index = start; index < messages.size(); ++index)
+    {
+        total += EstimateMessageChars(messages[index]);
+    }
+    return total;
+}
+
+std::vector<core::ChatMessage> BuildTrimmedMessages(const std::vector<core::ChatMessage>& messages,
+                                                    std::size_t system_end, std::size_t start)
+{
+    std::vector<core::ChatMessage> trimmed;
+    trimmed.reserve(system_end + messages.size() - start);
+    trimmed.insert(trimmed.end(), messages.begin(), messages.begin() + static_cast<std::ptrdiff_t>(system_end));
+    trimmed.insert(trimmed.end(), messages.begin() + static_cast<std::ptrdiff_t>(start), messages.end());
+    return trimmed;
+}
+
+std::vector<core::ChatMessage> TrimMessages(const std::vector<core::ChatMessage>& messages, std::size_t max_chars)
+{
+    if (max_chars == 0 || EstimateMessagesChars(messages, 0) <= max_chars)
+    {
+        return messages;
+    }
+
+    std::size_t system_end = 0;
+    while (system_end < messages.size() && messages[system_end].role == core::ChatRole::System)
+    {
+        ++system_end;
+    }
+
+    const std::size_t system_chars = EstimateMessagesChars(messages, 0) - EstimateMessagesChars(messages, system_end);
+    for (std::size_t start = system_end; start < messages.size(); ++start)
+    {
+        if (messages[start].role != core::ChatRole::User)
+        {
+            continue;
+        }
+        if (system_chars + EstimateMessagesChars(messages, start) <= max_chars)
+        {
+            return BuildTrimmedMessages(messages, system_end, start);
+        }
+    }
+
+    // 兜底：即使超预算，也保留 system + 最近一个 User 及其后续消息，避免无 user 请求。
+    for (std::size_t index = messages.size(); index > system_end; --index)
+    {
+        if (messages[index - 1].role == core::ChatRole::User)
+        {
+            return BuildTrimmedMessages(messages, system_end, index - 1);
+        }
+    }
+
+    return messages;
+}
+
 } // namespace
 
 AgentRunner::AgentRunner(core::ChatModel& model, ToolRegistry* tools, core::SystemRegistry* systems)
@@ -184,7 +252,7 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
             request.temperature = profile.temperature;
             request.max_tokens = profile.max_tokens;
             request.tools = tool_specs;
-            request.messages = conversation.messages;
+            request.messages = TrimMessages(conversation.messages, profile.max_context_chars);
 
             NotifyModelRequest(m_systems, request);
 

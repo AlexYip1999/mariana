@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,8 @@ struct AgentProfile
     double temperature = 0.0;
     int max_tokens = 1024;
     int max_steps = 8;
+    // 0 = 不裁剪；按字符估算，避免引入 tokenizer 依赖。
+    std::size_t max_context_chars = 0;
 };
 
 struct AgentRunResult

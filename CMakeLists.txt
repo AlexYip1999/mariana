@@ -23,12 +23,13 @@ target_include_directories(agent_third_party INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
 
-# 模块：依赖方向 hosts -> integrations -> core
+# 模块：依赖方向 hosts -> runtime/plugins/integrations -> core
 add_subdirectory(source/core)
 add_subdirectory(source/integrations/transport)
 add_subdirectory(source/integrations/model)
 add_subdirectory(source/plugins/metrics)
 add_subdirectory(source/plugins/tools)
+add_subdirectory(source/plugins/traces)
 add_subdirectory(source/runtime)
 add_subdirectory(source/hosts/cli)
 

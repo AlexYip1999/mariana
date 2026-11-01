@@ -173,6 +173,34 @@ TEST_CASE("host runner chats without tools")
     std::filesystem::remove_all(workspace);
 }
 
+TEST_CASE("host runner writes trace events")
+{
+    const std::filesystem::path workspace = MakeTempWorkspace();
+    {
+        ScopedWorkingDirectory scoped(workspace);
+        const auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
+        std::istringstream input;
+        std::ostringstream out;
+        std::ostringstream err;
+        const std::filesystem::path trace_dir = workspace / "traces";
+        const std::vector<std::string> args = {"--trace-dir", trace_dir.string(), "--no-tools", "hi"};
+
+        CHECK(agent::hosts::cli::RunHost(args, environment, input, out, err) == 0);
+
+        std::filesystem::path trace_file;
+        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(trace_dir))
+        {
+            if (entry.path().extension() == ".jsonl")
+            {
+                trace_file = entry.path();
+            }
+        }
+        REQUIRE_FALSE(trace_file.empty());
+        CHECK(std::filesystem::file_size(trace_file) > 0);
+    }
+    std::filesystem::remove_all(workspace);
+}
+
 TEST_CASE("host runner rejects unknown tool names at startup")
 {
     const std::filesystem::path workspace = MakeTempWorkspace();

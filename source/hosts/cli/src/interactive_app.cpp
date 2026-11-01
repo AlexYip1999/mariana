@@ -30,6 +30,7 @@ runtime::AgentSessionConfig MakeSessionConfig(const CliConfig& config)
     session_config.system_prompt = config.system_prompt;
     session_config.temperature = config.temperature;
     session_config.max_tokens = config.max_tokens;
+    session_config.max_context_chars = config.max_context_chars;
     session_config.tool_names = config.tool_names;
     return session_config;
 }

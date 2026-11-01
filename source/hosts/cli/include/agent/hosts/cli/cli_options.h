@@ -21,9 +21,11 @@ struct CliOptions
     bool stats = false;
     bool no_tools = false;
     bool trust_workspace_config = false;
+    bool trace = false;
     CliMode mode = CliMode::Chat;
     std::string config_path;
     std::string workspace_root;
+    std::string trace_dir = "traces";
     std::vector<std::string> question;
 };
 

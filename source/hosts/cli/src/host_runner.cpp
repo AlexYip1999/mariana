@@ -19,6 +19,7 @@
 #include "agent/model/openai_chat_model.h"
 #include "agent/plugins/metrics/metrics_collector.h"
 #include "agent/plugins/tools/read_file_tool.h"
+#include "agent/plugins/traces/file_tracer.h"
 #include "agent/runtime/agent_runner.h"
 #include "agent/runtime/service_registry.h"
 #include "agent/runtime/tool_registry.h"
@@ -42,6 +43,8 @@ void PrintUsage(std::ostream& out)
         << "\n"
         << "--workspace 工具可访问的根目录（默认当前工作目录）。\n"
         << "--no-tools 不注册任何工具。\n"
+        << "--trace 把 turn/model/tool 事件写入 traces/<session>.jsonl。\n"
+        << "--trace-dir <path> 指定 trace 目录（隐含 --trace，默认 traces）。\n"
         << "--trust-workspace-config 允许当前目录配置覆盖 endpoint/api_key_env/model/system_prompt。\n"
         << "--init-config 写入默认配置；与 --interactive 组合时先写配置再进入交互。\n"
         << "--interactive 进入终端聊天模式（输入 /help 查看命令，/stats 查看统计）。\n"
@@ -217,7 +220,7 @@ int RunHost(const std::vector<std::string>& args, const HostEnvironment& environ
     model::OpenAiChatModel model(*transport, model_config);
 
     const bool interactive = options.mode == CliMode::Interactive;
-    const bool observability_enabled = interactive || options.stats;
+    const bool observability_enabled = interactive || options.stats || options.trace;
 
     runtime::ServiceRegistry services;
 
@@ -254,14 +257,28 @@ int RunHost(const std::vector<std::string>& args, const HostEnvironment& environ
     if (observability_enabled)
     {
         systems = std::make_shared<core::SystemRegistry>();
-        const plugins::metrics::CostEstimator cost_estimator =
-            config.cost_currency == "USD" ? plugins::metrics::CostEstimator::DeepSeekUsdDefaults()
-                                          : plugins::metrics::CostEstimator::DeepSeekCnyDefaults();
-        const auto metrics =
-            std::make_shared<plugins::metrics::MetricsCollector>(config.provider, 1000000, cost_estimator);
+        if (interactive || options.stats)
+        {
+            const plugins::metrics::CostEstimator cost_estimator =
+                config.cost_currency == "USD" ? plugins::metrics::CostEstimator::DeepSeekUsdDefaults()
+                                              : plugins::metrics::CostEstimator::DeepSeekCnyDefaults();
+            const auto metrics =
+                std::make_shared<plugins::metrics::MetricsCollector>(config.provider, 1000000, cost_estimator);
 
-        systems->Add(metrics);
-        services.Set<core::StatsView>(metrics);
+            systems->Add(metrics);
+            services.Set<core::StatsView>(metrics);
+        }
+        if (options.trace)
+        {
+            const auto tracer = std::make_shared<plugins::traces::FileTracer>(options.trace_dir);
+            if (!tracer->IsOpen())
+            {
+                err << "cannot open trace directory: " << options.trace_dir << "\n";
+                return 2;
+            }
+            systems->Add(tracer);
+            err << "trace: " << tracer->Path().string() << "\n";
+        }
         services.Set<core::SystemRegistry>(systems);
     }
 

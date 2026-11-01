@@ -48,6 +48,23 @@ CliParseResult ParseCliOptions(const std::vector<std::string>& args)
             result.options.no_tools = true;
             continue;
         }
+        if (!end_of_options && arg == "--trace")
+        {
+            result.options.trace = true;
+            continue;
+        }
+        if (!end_of_options && arg == "--trace-dir")
+        {
+            if (i + 1 >= args.size())
+            {
+                result.ok = false;
+                result.error = "--trace-dir requires a path";
+                return result;
+            }
+            result.options.trace = true;
+            result.options.trace_dir = args[++i];
+            continue;
+        }
         if (!end_of_options && arg == "--trust-workspace-config")
         {
             result.options.trust_workspace_config = true;

@@ -512,15 +512,15 @@ A2 开工前先做一次真实 API 验证（见 10.3）。
 | 工具参数 JSON 非法 | 工具返回 `ok=false`，回给模型 |
 | 工具执行失败 | 回给模型；连续失败超过阈值则终止 |
 | max_steps 达到 | 返回失败，附带已完成的消息 |
-| 会话历史过长 | A2 先不做裁剪，记录 TODO；A3 加 token 预算 |
+| 会话历史过长 | `AgentProfile.max_context_chars` 控制发送给模型的字符预算，按 User 边界裁剪旧轮次 |
 
 ## 8. 可观测性
 
-A2 先实现 Tracer 接口 + NullTracer，A2.2 加文件 trace：
+A2 已实现 Tracer 接口 + NullTracer + JSONL `FileTracer`：
 
 ```text
 traces/
-  2026-11-01T...jsonl
+  <session-id>.jsonl
 ```
 
 多个 system（metrics、文件 trace、UI）通过 `SystemRegistry` 注册，Runner 在每个阶段遍历：
@@ -532,16 +532,16 @@ systems->Add(file_trace);
 services.Set<SystemRegistry>(systems);
 ```
 
-事件字段建议：
+事件字段：
 
-- `event`: `model_request` / `model_response` / `tool_call` / `tool_result`
-- `step`
+- `event`: `turn_start` / `model_request` / `model_response` / `tool_call` / `tool_result` / `turn_end`
+- `turn` / `step`
 - `duration_ms`
 - `tool_name` / `tool_call_id`
+- `finish_reason` / `usage`
 - `ok` / `error`
-- `usage`（如果响应带 token 统计）
 
-禁止记录 API key、Authorization header、完整密钥。
+内容会截断到 2000 字符，并把 `sk-...` 替换为 `[REDACTED]`；不能记录 Authorization header 或完整密钥。
 
 ## 9. 测试策略
 
@@ -576,12 +576,13 @@ services.Set<SystemRegistry>(systems);
 - `AgentExecutor` 接口 + `Tool` / `ToolRegistry` / `AgentRunner`（ReAct 默认实现）/ `AgentProfile` / `Tracer`；
 - `read_file` 工具；
 - FakeChatModel 离线测试；
-- CLI 增加 `--agent`（或 interactive 走 AgentRunner）。
+- CLI 默认走 `AgentRunner`；提供 `--no-tools` / `--workspace` / `tool_names`。
 
 ### A2.2 真机与可观测
 
 - 真实 DeepSeek tool call 联调；
-- 文件 Tracer；
+- JSONL `FileTracer`（已实现）；
+- `max_context_chars` conversation 预算（已实现）；
 - 错误/重试/限制完善。
 
 ### A2.3 演进预留

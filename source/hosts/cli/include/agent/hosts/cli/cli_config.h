@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -18,6 +19,7 @@ struct CliConfig
     int timeout_ms = 30000;
     int max_tokens = 1024;
     double temperature = 0.0;
+    std::size_t max_context_chars = 120000;
     std::vector<std::string> tool_names = {"read_file"};
 };
 

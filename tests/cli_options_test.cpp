@@ -89,6 +89,17 @@ TEST_CASE("parses workspace and no-tools options")
     CHECK(result.options.no_tools);
 }
 
+TEST_CASE("parses trace options")
+{
+    const agent::hosts::cli::CliParseResult result =
+        agent::hosts::cli::ParseCliOptions({"--trace-dir", "custom-traces", "--no-tools"});
+
+    CHECK(result.ok);
+    CHECK(result.options.trace);
+    CHECK(result.options.trace_dir == "custom-traces");
+    CHECK(result.options.no_tools);
+}
+
 TEST_CASE("parses trust workspace config option")
 {
     const agent::hosts::cli::CliParseResult result = agent::hosts::cli::ParseCliOptions({"--trust-workspace-config"});

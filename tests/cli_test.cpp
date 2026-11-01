@@ -131,6 +131,7 @@ TEST_CASE("parses cli config overrides")
     CHECK(result.config.api_key_env == "DEEPSEEK_API_KEY");
     CHECK(result.config.provider == "deepseek");
     CHECK(result.config.cost_currency == "CNY");
+    CHECK(result.config.max_context_chars == 120000);
     CHECK(result.config.tool_names == std::vector<std::string>{"read_file"});
 }
 

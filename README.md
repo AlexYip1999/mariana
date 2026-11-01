@@ -15,6 +15,7 @@
 | `source/integrations/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 integrations |
 | `source/runtime/` | 通用 Agent 运行时：`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`（默认 ReAct）、`ToolRegistry`、`ServiceRegistry` |
 | `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（WorkspacePathPolicy、句柄级复核、敏感文件拒绝、UTF-8 校验、大小限制） |
+| `source/plugins/traces/` | JSONL trace 插件：turn/model/tool/usage 事件，内容截断与 key 脱敏 |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
 | `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮/交互式、`--stats`、`--workspace`、`--no-tools`） |
 | `tests/` | 单元测试（doctest） |
@@ -81,7 +82,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 - `resources/config.json`（提交到仓库）：共享默认值，不含密钥；构建时复制到 exe 同目录；
 - `config.local.json`（gitignore）：本机覆盖，只写需要改的字段，字段级覆盖 shared；
 - 内置默认值兜底；`--config <path>` 显式指定时只加载该文件；
-- `tool_names` 为空数组表示禁用工具；非空名字必须存在于 ToolRegistry（CLI 当前只注册 `read_file`）。
+- `tool_names` 为空数组表示禁用工具；非空名字必须存在于 ToolRegistry（CLI 当前只注册 `read_file`）；
+- `max_context_chars` 控制发送给模型的 conversation 字符预算（0 = 不裁剪，默认 120000）；
+- `--trace` / `--trace-dir <path>` 把事件写入 JSONL trace。
 
 ## 设计文档
 

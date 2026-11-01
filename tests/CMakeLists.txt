@@ -40,7 +40,12 @@ add_executable(agent_cli_tests
     host_runner_test.cpp
 )
 target_include_directories(agent_cli_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(agent_cli_tests PRIVATE agent_cli_lib agent_metrics agent_tools agent_third_party)
+target_link_libraries(agent_cli_tests PRIVATE agent_cli_lib agent_metrics agent_tools agent_traces agent_third_party)
+
+add_executable(agent_trace_tests
+    trace_test.cpp
+)
+target_link_libraries(agent_trace_tests PRIVATE agent_traces agent_third_party)
 
 if(WIN32)
     add_executable(agent_transport_winhttp_tests
@@ -56,6 +61,7 @@ add_test(NAME agent_metrics_tests COMMAND agent_metrics_tests)
 add_test(NAME agent_runtime_tests COMMAND agent_runtime_tests)
 add_test(NAME agent_tools_tests COMMAND agent_tools_tests)
 add_test(NAME agent_cli_tests COMMAND agent_cli_tests)
+add_test(NAME agent_trace_tests COMMAND agent_trace_tests)
 if(WIN32)
     add_test(NAME agent_transport_winhttp_tests COMMAND agent_transport_winhttp_tests)
 endif()
