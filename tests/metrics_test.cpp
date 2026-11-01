@@ -202,6 +202,25 @@ TEST_CASE("collects usage speed and cost")
     CHECK(line.find("≈ ¥") != std::string::npos);
 }
 
+TEST_CASE("tool calls do not increment model steps")
+{
+    agent::plugins::metrics::MetricsCollector metrics;
+    agent::core::ChatRequest request;
+    request.model = "deepseek-flash";
+    agent::core::ChatResponse response;
+    response.ok = true;
+
+    metrics.OnTurnStart();
+    metrics.OnModelRequest(request);
+    agent::core::ToolCall call;
+    call.name = "read_file";
+    metrics.OnToolCall(call);
+    metrics.OnModelResponse(response);
+
+    CHECK(metrics.Snapshot().turns == 1);
+    CHECK(metrics.Snapshot().steps == 1);
+}
+
 TEST_CASE("keeps context usage after response without usage")
 {
     std::vector<std::chrono::steady_clock::time_point> points;

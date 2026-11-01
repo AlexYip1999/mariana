@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -10,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "agent/core/system_registry.h"
 #include "agent/hosts/cli/cli_app.h"
 #include "agent/hosts/cli/cli_config.h"
 #include "agent/hosts/cli/interactive_app.h"
@@ -19,6 +21,28 @@
 
 namespace
 {
+
+class ScopedWorkingDirectory
+{
+  public:
+    explicit ScopedWorkingDirectory(const std::filesystem::path& path)
+        : m_previous(std::filesystem::current_path())
+    {
+        std::filesystem::current_path(path);
+    }
+
+    ~ScopedWorkingDirectory()
+    {
+        std::error_code error;
+        std::filesystem::current_path(m_previous, error);
+    }
+
+    ScopedWorkingDirectory(const ScopedWorkingDirectory&) = delete;
+    ScopedWorkingDirectory& operator=(const ScopedWorkingDirectory&) = delete;
+
+  private:
+    std::filesystem::path m_previous;
+};
 
 agent::hosts::cli::CliConfig MakeCliConfig()
 {
@@ -84,6 +108,26 @@ TEST_CASE("parses cli config overrides")
     CHECK(result.config.api_key_env == "DEEPSEEK_API_KEY");
     CHECK(result.config.provider == "deepseek");
     CHECK(result.config.cost_currency == "CNY");
+    CHECK(result.config.tool_names == std::vector<std::string>{"read_file"});
+}
+
+TEST_CASE("parses tool names")
+{
+    const agent::hosts::cli::ConfigLoadResult result =
+        agent::hosts::cli::ParseCliConfig(R"({"tool_names":["read_file","search_web"]})");
+
+    CHECK(result.ok);
+    REQUIRE(result.config.tool_names.size() == 2);
+    CHECK(result.config.tool_names[0] == "read_file");
+    CHECK(result.config.tool_names[1] == "search_web");
+}
+
+TEST_CASE("rejects invalid tool names")
+{
+    const agent::hosts::cli::ConfigLoadResult result = agent::hosts::cli::ParseCliConfig(R"({"tool_names":[1]})");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("tool_names") != std::string::npos);
 }
 
 TEST_CASE("rejects empty provider")
@@ -134,19 +178,27 @@ TEST_CASE("rejects api keys stored in config")
 
 TEST_CASE("loads config.local.json from working directory")
 {
-    const std::string path = "config.local.json";
+    const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    const std::filesystem::path workspace =
+        std::filesystem::temp_directory_path() / ("agent-core-cli-cwd-" + std::to_string(stamp));
+    std::filesystem::create_directories(workspace);
+
     {
-        std::ofstream file(path);
-        file << R"({"model":"unit-test-model"})";
+        ScopedWorkingDirectory scoped(workspace);
+        {
+            std::ofstream file("config.local.json");
+            file << R"({"model":"unit-test-model"})";
+        }
+
+        const agent::hosts::cli::DefaultConfigResult result = agent::hosts::cli::LoadDefaultCliConfig();
+
+        CHECK(result.ok);
+        CHECK(result.found);
+        CHECK(result.path == "config.local.json");
+        CHECK(result.config.model == "unit-test-model");
     }
 
-    const agent::hosts::cli::DefaultConfigResult result = agent::hosts::cli::LoadDefaultCliConfig();
-    std::filesystem::remove(path);
-
-    CHECK(result.ok);
-    CHECK(result.found);
-    CHECK(result.path == path);
-    CHECK(result.config.model == "unit-test-model");
+    std::filesystem::remove_all(workspace);
 }
 
 TEST_CASE("loads shared config from exe directory")
@@ -358,7 +410,9 @@ TEST_CASE("one-shot reports stats when enabled")
     std::ostringstream error;
     const auto metrics = std::make_shared<agent::plugins::metrics::MetricsCollector>();
     agent::runtime::ServiceRegistry services;
-    services.Set<agent::core::Tracer>(metrics);
+    const auto systems = std::make_shared<agent::core::SystemRegistry>();
+    systems->Add(metrics);
+    services.Set<agent::core::SystemRegistry>(systems);
     services.Set<agent::core::StatsView>(metrics);
 
     const int exit_code = agent::hosts::cli::RunCli({"hi"}, adapter, MakeCliConfig(), output, error, services);
@@ -383,7 +437,9 @@ TEST_CASE("interactive reports metrics when enabled")
     std::ostringstream error;
     const auto metrics = std::make_shared<agent::plugins::metrics::MetricsCollector>();
     agent::runtime::ServiceRegistry services;
-    services.Set<agent::core::Tracer>(metrics);
+    const auto systems = std::make_shared<agent::core::SystemRegistry>();
+    systems->Add(metrics);
+    services.Set<agent::core::SystemRegistry>(systems);
     services.Set<agent::core::StatsView>(metrics);
     const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, services, true);
 
@@ -406,7 +462,9 @@ TEST_CASE("interactive stats command reports current session")
     std::ostringstream error;
     const auto metrics = std::make_shared<agent::plugins::metrics::MetricsCollector>();
     agent::runtime::ServiceRegistry services;
-    services.Set<agent::core::Tracer>(metrics);
+    const auto systems = std::make_shared<agent::core::SystemRegistry>();
+    systems->Add(metrics);
+    services.Set<agent::core::SystemRegistry>(systems);
     services.Set<agent::core::StatsView>(metrics);
     const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, services, false);
 

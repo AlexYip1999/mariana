@@ -1,13 +1,22 @@
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <system_error>
+#include <utility>
 #include <vector>
 
+// clang-format off
+#if defined(_WIN32)
+#include <windows.h>
+#include <shellapi.h>
+#endif
+// clang-format on
+
 #include "agent/core/chat_model.h"
-#include "agent/core/composite_tracer.h"
 #include "agent/core/stats_view.h"
-#include "agent/core/tracer.h"
+#include "agent/core/system_registry.h"
 #include "agent/core/version.h"
 #include "agent/hosts/cli/cli_app.h"
 #include "agent/hosts/cli/cli_config.h"
@@ -16,11 +25,49 @@
 #include "agent/hosts/cli/platform_transport.h"
 #include "agent/model/openai_chat_model.h"
 #include "agent/plugins/metrics/metrics_collector.h"
+#include "agent/plugins/tools/read_file_tool.h"
 #include "agent/runtime/service_registry.h"
+#include "agent/runtime/tool_registry.h"
 #include "agent/transport/http_transport.h"
 
 namespace
 {
+
+std::vector<std::string> ReadUtf8Args(int argc, char** argv)
+{
+#if defined(_WIN32)
+    int wide_count = 0;
+    LPWSTR* wide_args = CommandLineToArgvW(GetCommandLineW(), &wide_count);
+    if (wide_args != nullptr)
+    {
+        std::vector<std::string> args;
+        args.reserve(static_cast<std::size_t>(wide_count));
+        for (int i = 0; i < wide_count; ++i)
+        {
+            const int size = WideCharToMultiByte(CP_UTF8, 0, wide_args[i], -1, nullptr, 0, nullptr, nullptr);
+            if (size <= 0)
+            {
+                continue;
+            }
+
+            std::string value(static_cast<std::size_t>(size), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, wide_args[i], -1, value.data(), size, nullptr, nullptr);
+            value.resize(static_cast<std::size_t>(size - 1));
+            args.push_back(std::move(value));
+        }
+        LocalFree(wide_args);
+        return args;
+    }
+#endif
+
+    std::vector<std::string> args;
+    args.reserve(static_cast<std::size_t>(argc));
+    for (int i = 0; i < argc; ++i)
+    {
+        args.emplace_back(argv[i]);
+    }
+    return args;
+}
 
 void PrintUsage()
 {
@@ -49,12 +96,18 @@ void PrintUsage()
 
 int main(int argc, char** argv)
 {
-    const std::string executable_path = (argc > 0) ? argv[0] : std::string();
+#if defined(_WIN32)
+    SetConsoleCP(CP_UTF8);
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+
+    const std::vector<std::string> all_args = ReadUtf8Args(argc, argv);
+    const std::string executable_path = all_args.empty() ? std::string() : all_args.front();
 
     std::vector<std::string> raw_args;
-    for (int i = 1; i < argc; ++i)
+    if (all_args.size() > 1)
     {
-        raw_args.emplace_back(argv[i]);
+        raw_args.assign(all_args.begin() + 1, all_args.end());
     }
 
     const agent::hosts::cli::CliParseResult parsed = agent::hosts::cli::ParseCliOptions(raw_args);
@@ -81,14 +134,22 @@ int main(int argc, char** argv)
     if (options.init_config)
     {
         const std::string target = config_path.empty() ? "config.local.json" : config_path;
-        const agent::hosts::cli::ConfigInitResult result = agent::hosts::cli::WriteDefaultCliConfigFile(target);
-        if (!result.ok)
+        const bool exists = std::filesystem::exists(target);
+
+        if (exists && options.mode == agent::hosts::cli::CliMode::Interactive)
         {
-            std::cerr << "init config failed: " << result.error << "\n";
-            return 2;
+            std::cout << "config already exists: " << target << "\n";
         }
-        std::cout << "created " << result.path << "\n";
-        config_path = result.path;
+        else
+        {
+            const agent::hosts::cli::ConfigInitResult result = agent::hosts::cli::WriteDefaultCliConfigFile(target);
+            if (!result.ok)
+            {
+                std::cerr << "init config failed: " << result.error << "\n";
+                return 2;
+            }
+            std::cout << "created " << result.path << "\n";
+        }
 
         if (options.mode == agent::hosts::cli::CliMode::InitConfig)
         {
@@ -154,6 +215,24 @@ int main(int argc, char** argv)
     const bool observability_enabled = interactive || options.stats;
 
     agent::runtime::ServiceRegistry services;
+
+    std::error_code workspace_error;
+    const std::filesystem::path workspace = std::filesystem::current_path(workspace_error);
+    if (workspace_error)
+    {
+        std::cerr << "cannot resolve workspace: " << workspace_error.message() << "\n";
+        return 2;
+    }
+
+    const auto tools = std::make_shared<agent::runtime::ToolRegistry>();
+    std::string tool_error;
+    if (!tools->Register(std::make_shared<agent::plugins::tools::ReadFileTool>(workspace), tool_error))
+    {
+        std::cerr << "tool registration failed: " << tool_error << "\n";
+        return 2;
+    }
+    services.Set<agent::runtime::ToolRegistry>(tools);
+
     if (observability_enabled)
     {
         const agent::plugins::metrics::CostEstimator cost_estimator =
@@ -161,9 +240,9 @@ int main(int argc, char** argv)
                                           : agent::plugins::metrics::CostEstimator::DeepSeekCnyDefaults();
         const auto metrics =
             std::make_shared<agent::plugins::metrics::MetricsCollector>(config.provider, 1000000, cost_estimator);
-        const auto tracer = std::make_shared<agent::core::CompositeTracer>();
-        tracer->Add(metrics);
-        services.Set<agent::core::Tracer>(tracer);
+        const auto systems = std::make_shared<agent::core::SystemRegistry>();
+        systems->Add(metrics);
+        services.Set<agent::core::SystemRegistry>(systems);
         services.Set<agent::core::StatsView>(metrics);
     }
 

@@ -3,10 +3,10 @@
 #include <string>
 
 #include "agent/core/chat_model.h"
-#include "agent/core/composite_tracer.h"
 #include "agent/core/context.h"
 #include "agent/core/conversation.h"
 #include "agent/core/message.h"
+#include "agent/core/system_registry.h"
 #include "agent/core/tool.h"
 #include "agent/core/tracer.h"
 
@@ -221,43 +221,22 @@ TEST_CASE("fake tracer records events")
     CHECK(tracer.m_last_tool == "read_file");
 }
 
-TEST_CASE("composite tracer forwards to all observers")
+TEST_CASE("system registry keeps ordered systems")
 {
     const auto first = std::make_shared<FakeTracer>();
     const auto second = std::make_shared<FakeTracer>();
 
-    agent::core::CompositeTracer composite;
-    composite.Add(first);
-    composite.Add(second);
-    composite.Add(nullptr);
-    CHECK(composite.Size() == 2);
+    agent::core::SystemRegistry registry;
+    registry.Add(first);
+    registry.Add(second);
+    registry.Add(nullptr);
+    CHECK(registry.Size() == 2);
+    REQUIRE(registry.Systems().size() == 2);
+    CHECK(registry.Systems()[0].get() == first.get());
+    CHECK(registry.Systems()[1].get() == second.get());
 
-    agent::core::ChatRequest request;
-    request.model = "deepseek-flash";
-    agent::core::ChatResponse response;
-    response.ok = true;
-    agent::core::ToolCall call;
-    call.name = "read_file";
-    agent::core::ToolResult result;
-    result.ok = true;
-
-    composite.OnTurnStart();
-    composite.OnModelRequest(request);
-    composite.OnModelResponse(response);
-    composite.OnToolCall(call);
-    composite.OnToolResult(call, result);
-
-    CHECK(first->m_model_requests == 1);
-    CHECK(first->m_model_responses == 1);
-    CHECK(first->m_tool_calls == 1);
-    CHECK(first->m_tool_results == 1);
-    CHECK(second->m_model_requests == 1);
-    CHECK(second->m_model_responses == 1);
-    CHECK(second->m_tool_calls == 1);
-    CHECK(second->m_tool_results == 1);
-
-    composite.Clear();
-    CHECK(composite.Size() == 0);
+    registry.Clear();
+    CHECK(registry.Size() == 0);
 }
 
 TEST_CASE("conversation appends and clears messages")

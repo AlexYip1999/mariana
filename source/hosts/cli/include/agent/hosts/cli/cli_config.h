@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace agent::hosts::cli
 {
@@ -17,6 +18,7 @@ struct CliConfig
     int timeout_ms = 30000;
     int max_tokens = 1024;
     double temperature = 0.0;
+    std::vector<std::string> tool_names = {"read_file"};
 };
 
 struct ConfigLoadResult

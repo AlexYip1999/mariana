@@ -29,6 +29,22 @@ $env:DEEPSEEK_API_KEY = "..."
 .\build\vs2022\bin\Debug\agent-cli.exe --stats "用一句话介绍 C++20"
 ```
 
+## 工具
+
+CLI 默认注册一个只读工具：
+
+```text
+read_file({"path":"relative/path.txt"})
+```
+
+规则：
+
+- workspace = 启动 CLI 时的当前工作目录；
+- 只允许 workspace 内的相对路径；
+- 拒绝绝对路径、`..` 越界、目录和超过 256 KiB 的文件；
+- 模型通过 `tool_calls` 调用，结果以 `role=tool` 回填后继续推理；
+- 最多 8 个模型/工具步骤。
+
 ## 配置
 
 配置分三层，后者按字段覆盖前者：
@@ -50,7 +66,7 @@ DeepSeek 相关：
 - `model` 当前为 `deepseek-flash`（或 `deepseek-v4-pro`）；
 - API key 只从环境变量读，默认变量名 `DEEPSEEK_API_KEY`，可用 `api_key_env` 改名；**不要把 key 写进任何配置文件**，解析器会拒绝 `api_key` / `key` / `token` 字段。
 
-配置项：`provider`、`cost_currency`、`endpoint`、`model`、`api_key_env`、`system_prompt`、`timeout_ms`、`max_tokens`、`temperature`。
+配置项：`provider`、`cost_currency`、`endpoint`、`model`、`api_key_env`、`system_prompt`、`timeout_ms`、`max_tokens`、`temperature`、`tool_names`。
 
 ## 当前状态
 

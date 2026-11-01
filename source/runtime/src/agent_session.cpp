@@ -2,17 +2,16 @@
 
 #include <utility>
 
+#include "agent/runtime/agent_runner.h"
+
 namespace agent::runtime
 {
 
 AgentSession::AgentSession(AgentSessionConfig config, AgentSessionDependencies dependencies)
     : m_config(std::move(config))
     , m_dependencies(dependencies)
+    , m_systems(dependencies.systems)
 {
-    if (m_dependencies.services != nullptr)
-    {
-        m_tracer = m_dependencies.services->Get<core::Tracer>();
-    }
     AppendSystemPrompt();
 }
 
@@ -30,42 +29,20 @@ AgentRunResult AgentSession::RunTurn(const std::string& user_input)
         return result;
     }
 
-    if (m_tracer != nullptr)
+    AgentProfile profile;
+    profile.model = m_config.model;
+    profile.system_prompt = m_config.system_prompt;
+    profile.temperature = m_config.temperature;
+    profile.max_tokens = m_config.max_tokens;
+    profile.max_steps = m_config.max_steps;
+    if (m_dependencies.tools != nullptr)
     {
-        m_tracer->OnTurnStart();
+        profile.tool_names = m_config.tool_names;
     }
 
-    m_conversation.Append(core::ChatRole::User, user_input);
-
-    core::ChatRequest request;
-    request.model = m_config.model;
-    request.temperature = m_config.temperature;
-    request.max_tokens = m_config.max_tokens;
-    request.messages = m_conversation.messages;
-
-    if (m_tracer != nullptr)
-    {
-        m_tracer->OnModelRequest(request);
-    }
-
-    const core::ChatResponse response = m_dependencies.model->Chat(request);
-    if (m_tracer != nullptr)
-    {
-        m_tracer->OnModelResponse(response);
-    }
-
-    if (!response.ok)
-    {
-        // 失败的那一轮不留在历史里。
-        m_conversation.messages.pop_back();
-        result.error = response.error;
-        return result;
-    }
-
-    m_conversation.Append(core::ChatRole::Assistant, response.content);
-    result.ok = true;
-    result.content = response.content;
-    return result;
+    ToolRegistry& tools = m_dependencies.tools != nullptr ? *m_dependencies.tools : m_empty_tools;
+    AgentRunner runner(*m_dependencies.model, tools, m_systems);
+    return runner.Run(profile, m_conversation, user_input);
 }
 
 void AgentSession::ClearHistory()

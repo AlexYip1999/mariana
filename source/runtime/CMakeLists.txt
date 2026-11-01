@@ -1,5 +1,7 @@
 add_library(agent_runtime
+    src/agent_runner.cpp
     src/agent_session.cpp
+    src/tool_registry.cpp
 )
 
 target_include_directories(agent_runtime

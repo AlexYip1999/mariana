@@ -59,9 +59,9 @@ agent（编排层）
 core（接口与数据）
   ChatModel / ChatMessage / Tool / ToolResult / ToolSpec / Tracer 接口
         │
-        ├── adapters/model（OpenAI 序列化、tool_calls 解析）
+        ├── integrations/model（OpenAI 序列化、tool_calls 解析）
         ├── tools（read_file 等具体工具）
-        └── adapters/transport（HTTP）
+        └── integrations/transport（HTTP）
 ```
 
 原则：
@@ -201,36 +201,43 @@ struct Conversation
 - `AgentProfile` 是场景配置：代码助手、问答、自动化流程只是工具集和提示词不同；
 - 单 Agent 就是“一个 Conversation + 一个 AgentRunner”。
 
-### 4.6 Tracer
+### 4.6 AgentSystem / Tracer
+
+`AgentSystem` 是 loop 参与者基类，默认空实现；`Tracer` 是只读观察者的一种：
 
 ```cpp
-class Tracer
+class AgentSystem
 {
   public:
-    virtual ~Tracer() = default;
+    virtual ~AgentSystem() = default;
 
     virtual void OnTurnStart() {}
-    virtual void OnModelRequest(const ChatRequest& request) = 0;
-    virtual void OnModelResponse(const ChatResponse& response) = 0;
-    virtual void OnToolCall(const ToolCall& call) = 0;
-    virtual void OnToolResult(const ToolCall& call, const ToolResult& result) = 0;
+    virtual void OnModelRequest(const ChatRequest& request) {}
+    virtual void OnModelResponse(const ChatResponse& response) {}
+    virtual void OnToolCall(const ToolCall& call) {}
+    virtual void OnToolResult(const ToolCall& call, const ToolResult& result) {}
+};
+
+class Tracer : public AgentSystem
+{
 };
 ```
 
 A2 先提供 `NullTracer`；A2.2 再加文件 trace（JSONL，写入 `traces/`）。
 
-多观察者用 `CompositeTracer`：
+多个 system 用 `SystemRegistry` 注册：
 
 ```cpp
-auto tracer = std::make_shared<CompositeTracer>();
-tracer->Add(metrics);
-tracer->Add(file_trace);
-services.Set<Tracer>(tracer);
+auto systems = std::make_shared<SystemRegistry>();
+systems->Add(metrics);
+systems->Add(file_trace);
+services.Set<SystemRegistry>(systems);
 ```
 
 - `Tracer` 是只读观察者，不能修改请求/响应；
 - 需要审批、脱敏、限流时用独立 `ModelInterceptor` / `ToolInterceptor`；
-- 不要让插件继承 `AgentSession` 来 override。
+- 不要让插件继承 `AgentSession` 来 override；
+- Runner 只遍历 `AgentSystem`，不直接依赖具体 Tracer。
 
 ## 5. AgentRunner（默认 ReAct 执行器）
 
@@ -501,13 +508,13 @@ traces/
   2026-11-01T...jsonl
 ```
 
-多个观察者（metrics、文件 trace、UI）通过 `CompositeTracer` 组合，Session/Runner 只依赖一个 `Tracer`：
+多个 system（metrics、文件 trace、UI）通过 `SystemRegistry` 注册，Runner 在每个阶段遍历：
 
 ```cpp
-auto tracer = std::make_shared<CompositeTracer>();
-tracer->Add(metrics);
-tracer->Add(file_trace);
-services.Set<Tracer>(tracer);
+auto systems = std::make_shared<SystemRegistry>();
+systems->Add(metrics);
+systems->Add(file_trace);
+services.Set<SystemRegistry>(systems);
 ```
 
 事件字段建议：

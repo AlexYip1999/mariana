@@ -6,6 +6,7 @@
 
 #include "agent/core/stats_view.h"
 #include "agent/runtime/agent_session.h"
+#include "agent/runtime/tool_registry.h"
 
 namespace agent::hosts::cli
 {
@@ -34,6 +35,7 @@ runtime::AgentSessionConfig MakeSessionConfig(const CliConfig& config)
     session_config.system_prompt = config.system_prompt;
     session_config.temperature = config.temperature;
     session_config.max_tokens = config.max_tokens;
+    session_config.tool_names = config.tool_names;
     return session_config;
 }
 
@@ -57,10 +59,13 @@ int RunCli(const std::vector<std::string>& args, core::ChatModel& chat_model, co
     }
 
     const std::shared_ptr<core::StatsView> stats = services.Get<core::StatsView>();
+    const std::shared_ptr<runtime::ToolRegistry> tools = services.Get<runtime::ToolRegistry>();
+    const std::shared_ptr<core::SystemRegistry> systems = services.Get<core::SystemRegistry>();
 
     runtime::AgentSessionDependencies dependencies;
     dependencies.model = &chat_model;
-    dependencies.services = &services;
+    dependencies.tools = tools.get();
+    dependencies.systems = systems.get();
     runtime::AgentSession session(MakeSessionConfig(config), dependencies);
 
     const runtime::AgentRunResult result = session.RunTurn(JoinQuestion(args));

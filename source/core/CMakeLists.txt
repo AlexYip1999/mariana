@@ -1,5 +1,5 @@
 add_library(agent_core
-    src/composite_tracer.cpp
+    src/system_registry.cpp
     src/version.cpp
 )
 

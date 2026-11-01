@@ -1,0 +1,146 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <system_error>
+
+#include <nlohmann/json.hpp>
+
+#include "agent/core/tool.h"
+#include "agent/plugins/tools/read_file_tool.h"
+
+namespace
+{
+
+class TempWorkspace
+{
+  public:
+    TempWorkspace()
+    {
+        const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        m_path = std::filesystem::temp_directory_path() / ("agent-core-tools-" + std::to_string(stamp));
+        std::filesystem::create_directories(m_path);
+    }
+
+    ~TempWorkspace()
+    {
+        std::error_code error;
+        std::filesystem::remove_all(m_path, error);
+    }
+
+    TempWorkspace(const TempWorkspace&) = delete;
+    TempWorkspace& operator=(const TempWorkspace&) = delete;
+
+    const std::filesystem::path& Path() const
+    {
+        return m_path;
+    }
+
+  private:
+    std::filesystem::path m_path;
+};
+
+void WriteFile(const std::filesystem::path& path, const std::string& content)
+{
+    std::ofstream file(path, std::ios::binary);
+    file << content;
+}
+
+} // namespace
+
+TEST_CASE("reads a file inside the workspace")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "hello.txt", "hello");
+
+    agent::plugins::tools::ReadFileTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute(R"({"path":"hello.txt"})");
+
+    CHECK(tool.Name() == "read_file");
+    CHECK(tool.Spec().parameters_json.find("\"path\"") != std::string::npos);
+    CHECK(result.ok);
+    CHECK(result.content == "hello");
+}
+
+TEST_CASE("rejects binary files")
+{
+    TempWorkspace workspace;
+    std::ofstream file(workspace.Path() / "binary.bin", std::ios::binary);
+    const char bytes[] = {static_cast<char>(0x80), static_cast<char>(0x81)};
+    file.write(bytes, sizeof(bytes));
+    file.close();
+
+    agent::plugins::tools::ReadFileTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute(R"({"path":"binary.bin"})");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("UTF-8") != std::string::npos);
+}
+
+TEST_CASE("rejects invalid read_file arguments")
+{
+    TempWorkspace workspace;
+    agent::plugins::tools::ReadFileTool tool(workspace.Path());
+
+    const agent::core::ToolResult invalid_json = tool.Execute("{");
+    CHECK_FALSE(invalid_json.ok);
+    CHECK(invalid_json.error.find("invalid arguments JSON") != std::string::npos);
+
+    const agent::core::ToolResult missing_path = tool.Execute("{}");
+    CHECK_FALSE(missing_path.ok);
+    CHECK(missing_path.error.find("requires a string path") != std::string::npos);
+
+    const agent::core::ToolResult wrong_type = tool.Execute(R"({"path":123})");
+    CHECK_FALSE(wrong_type.ok);
+    CHECK(wrong_type.error.find("requires a string path") != std::string::npos);
+}
+
+TEST_CASE("rejects absolute paths and workspace escapes")
+{
+    TempWorkspace workspace;
+    const auto outside = std::filesystem::temp_directory_path() / "agent-core-tools-outside.txt";
+    WriteFile(outside, "outside");
+
+    agent::plugins::tools::ReadFileTool tool(workspace.Path());
+
+    const nlohmann::json absolute_args{
+        {
+            "path",
+            outside.string(),
+        },
+    };
+    const agent::core::ToolResult absolute = tool.Execute(absolute_args.dump());
+    CHECK_FALSE(absolute.ok);
+    CHECK(absolute.error.find("absolute paths") != std::string::npos);
+
+    const agent::core::ToolResult escape = tool.Execute(R"({"path":"../agent-core-tools-outside.txt"})");
+    CHECK_FALSE(escape.ok);
+    CHECK(escape.error.find("escapes workspace") != std::string::npos);
+
+    std::error_code error;
+    std::filesystem::remove(outside, error);
+}
+
+TEST_CASE("rejects directories and oversized files")
+{
+    TempWorkspace workspace;
+    std::filesystem::create_directories(workspace.Path() / "subdir");
+    WriteFile(workspace.Path() / "large.txt", "hello world");
+
+    agent::plugins::tools::ReadFileTool tool(workspace.Path(), 4);
+
+    const agent::core::ToolResult directory = tool.Execute(R"({"path":"subdir"})");
+    CHECK_FALSE(directory.ok);
+    CHECK(directory.error.find("not a regular file") != std::string::npos);
+
+    const agent::core::ToolResult too_large = tool.Execute(R"({"path":"large.txt"})");
+    CHECK_FALSE(too_large.ok);
+    CHECK(too_large.error.find("too large") != std::string::npos);
+
+    const agent::core::ToolResult missing = tool.Execute(R"({"path":"missing.txt"})");
+    CHECK_FALSE(missing.ok);
+    CHECK(missing.error.find("cannot inspect file") != std::string::npos);
+}

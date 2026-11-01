@@ -121,6 +121,28 @@ ConfigLoadResult ParseCliConfig(const std::string& json_text, const CliConfig& b
         result.config.timeout_ms = parsed.value("timeout_ms", result.config.timeout_ms);
         result.config.max_tokens = parsed.value("max_tokens", result.config.max_tokens);
         result.config.temperature = parsed.value("temperature", result.config.temperature);
+
+        if (parsed.contains("tool_names"))
+        {
+            if (!parsed["tool_names"].is_array())
+            {
+                result.ok = false;
+                result.error = "tool_names must be an array of strings";
+                return result;
+            }
+
+            result.config.tool_names.clear();
+            for (const nlohmann::json& item : parsed["tool_names"])
+            {
+                if (!item.is_string() || item.get<std::string>().empty())
+                {
+                    result.ok = false;
+                    result.error = "tool_names must contain non-empty strings";
+                    return result;
+                }
+                result.config.tool_names.push_back(item.get<std::string>());
+            }
+        }
     }
     catch (const nlohmann::json::exception& error)
     {
@@ -239,6 +261,7 @@ ConfigInitResult WriteDefaultCliConfigFile(const std::string& path)
     config_json["timeout_ms"] = defaults.timeout_ms;
     config_json["max_tokens"] = defaults.max_tokens;
     config_json["temperature"] = defaults.temperature;
+    config_json["tool_names"] = defaults.tool_names;
 
     std::ofstream file(path);
     if (!file.is_open())

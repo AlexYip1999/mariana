@@ -10,10 +10,11 @@
 |---|---|
 | `source/` | 源码根目录：每个模块自包含 `include/` + `src/` + `CMakeLists.txt`（见 `source/README.md`） |
 | `source/core/` | 引擎无关核心：`include/agent/` 公共 API + `src/` 实现 |
-| `source/adapters/` | 平台 / 协议适配器（transport、model 已定义；storage 待建） |
-| `source/adapters/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
-| `source/adapters/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 adapters |
-| `source/runtime/` | 通用 Agent 运行时：`AgentSession` + 外层 `SessionDriver` 接口 |
+| `source/integrations/` | 外部集成：模型、传输、存储等平台/协议实现 |
+| `source/integrations/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
+| `source/integrations/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 integrations |
+| `source/runtime/` | 通用 Agent 运行时：`AgentSession`、`ToolRegistry`、`ServiceRegistry`、`SessionDriver` 接口 |
+| `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（workspace 沙箱、大小限制） |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
 | `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮/交互式、`--stats`） |
 | `tests/` | 单元测试（doctest） |

@@ -70,7 +70,7 @@ void MetricsCollector::OnModelResponse(const core::ChatResponse& response)
 void MetricsCollector::OnToolCall(const core::ToolCall& call)
 {
     (void)call;
-    ++m_snapshot.steps;
+    // 步数只按模型调用计；工具调用次数以后如果需要单独统计，再加 tool_calls 字段。
 }
 
 void MetricsCollector::OnToolResult(const core::ToolCall& call, const core::ToolResult& result)

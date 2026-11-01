@@ -97,6 +97,176 @@ TEST_CASE("builds OpenAI-compatible request and parses content")
     CHECK(body["messages"][1]["content"] == "hi");
 }
 
+TEST_CASE("serializes tools and tool messages")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            nlohmann::json parsed;
+            parsed["choices"] = nlohmann::json::array();
+            parsed["choices"].push_back({{"message", {{"content", "done"}}}});
+            agent::transport::HttpResponse response;
+            response.status = 200;
+            response.body = parsed.dump();
+            return response;
+        });
+
+    agent::core::ChatRequest request = MakeChatRequest();
+    agent::core::ChatMessage assistant;
+    assistant.role = agent::core::ChatRole::Assistant;
+    assistant.content = "";
+    agent::core::ToolCall call;
+    call.id = "call_1";
+    call.name = "read_file";
+    call.arguments_json = R"({"path":"README.md"})";
+    assistant.tool_calls.push_back(call);
+    request.messages.push_back(assistant);
+
+    agent::core::ChatMessage tool_message;
+    tool_message.role = agent::core::ChatRole::Tool;
+    tool_message.tool_call_id = "call_1";
+    tool_message.content = "ok";
+    request.messages.push_back(tool_message);
+
+    agent::core::ToolSpec spec;
+    spec.name = "read_file";
+    spec.description = "Read a file";
+    spec.parameters_json = R"({"type":"object","properties":{"path":{"type":"string"}}})";
+    request.tools.push_back(spec);
+
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+    const agent::core::ChatResponse response = adapter.Chat(request);
+
+    CHECK(response.ok);
+    CHECK(response.content == "done");
+
+    const nlohmann::json body = nlohmann::json::parse(transport.LastRequest().body);
+    CHECK(body["tools"].size() == 1);
+    CHECK(body["tools"][0]["type"] == "function");
+    CHECK(body["tools"][0]["function"]["name"] == "read_file");
+    CHECK(body["tools"][0]["function"]["parameters"]["type"] == "object");
+    CHECK(body["messages"][2]["role"] == "assistant");
+    CHECK(body["messages"][2]["tool_calls"][0]["id"] == "call_1");
+    CHECK(body["messages"][2]["tool_calls"][0]["function"]["name"] == "read_file");
+    CHECK(body["messages"][3]["role"] == "tool");
+    CHECK(body["messages"][3]["tool_call_id"] == "call_1");
+    CHECK(body["messages"][3]["content"] == "ok");
+}
+
+TEST_CASE("rejects invalid tool schema before sending")
+{
+    agent::tests::FakeHttpTransport transport;
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+
+    agent::core::ChatRequest request = MakeChatRequest();
+    agent::core::ToolSpec spec;
+    spec.name = "read_file";
+    spec.parameters_json = "{";
+    request.tools.push_back(spec);
+
+    const agent::core::ChatResponse response = adapter.Chat(request);
+
+    CHECK_FALSE(response.ok);
+    CHECK(response.error.find("invalid tool parameters") != std::string::npos);
+    CHECK(transport.RequestCount() == 0);
+}
+
+TEST_CASE("does not crash on invalid UTF-8 message content")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            nlohmann::json parsed;
+            parsed["choices"] = nlohmann::json::array();
+            parsed["choices"].push_back({{"message", {{"content", "ok"}}}});
+            agent::transport::HttpResponse response;
+            response.status = 200;
+            response.body = parsed.dump();
+            return response;
+        });
+
+    agent::core::ChatRequest request = MakeChatRequest();
+    std::string invalid_utf8;
+    invalid_utf8.push_back(static_cast<char>(0x80));
+    request.messages[1].content = invalid_utf8;
+
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+    const agent::core::ChatResponse response = adapter.Chat(request);
+
+    CHECK(response.ok);
+    CHECK(response.content == "ok");
+    CHECK(transport.RequestCount() == 1);
+}
+
+TEST_CASE("rejects malformed tool_calls response")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            nlohmann::json function;
+            function["name"] = "read_file";
+            nlohmann::json call;
+            call["function"] = function;
+            nlohmann::json message;
+            message["content"] = nullptr;
+            message["tool_calls"] = nlohmann::json::array({call});
+            nlohmann::json parsed;
+            parsed["choices"] = nlohmann::json::array();
+            parsed["choices"].push_back({{"message", message}});
+            agent::transport::HttpResponse response;
+            response.status = 200;
+            response.body = parsed.dump();
+            return response;
+        });
+
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+    const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
+
+    CHECK_FALSE(response.ok);
+    CHECK(response.error.find("invalid tool_calls") != std::string::npos);
+}
+
+TEST_CASE("parses tool calls with null content")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            nlohmann::json arguments;
+            arguments["path"] = "README.md";
+            nlohmann::json function;
+            function["name"] = "read_file";
+            function["arguments"] = arguments.dump();
+            nlohmann::json call;
+            call["id"] = "call_1";
+            call["type"] = "function";
+            call["function"] = function;
+            nlohmann::json message;
+            message["content"] = nullptr;
+            message["tool_calls"] = nlohmann::json::array({call});
+            nlohmann::json parsed;
+            parsed["choices"] = nlohmann::json::array();
+            parsed["choices"].push_back({{"message", message}});
+            agent::transport::HttpResponse response;
+            response.status = 200;
+            response.body = parsed.dump();
+            return response;
+        });
+
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+    const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
+
+    CHECK(response.ok);
+    CHECK(response.content.empty());
+    CHECK(response.tool_calls.size() == 1);
+    CHECK(response.tool_calls[0].id == "call_1");
+    CHECK(response.tool_calls[0].name == "read_file");
+    CHECK(response.tool_calls[0].arguments_json == R"({"path":"README.md"})");
+}
+
 TEST_CASE("parses OpenAI-style cached tokens")
 {
     agent::tests::FakeHttpTransport transport;

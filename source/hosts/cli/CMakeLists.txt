@@ -25,7 +25,11 @@ add_executable(agent-cli
     src/main.cpp
 )
 
-target_link_libraries(agent-cli PRIVATE agent_cli_lib agent_metrics)
+target_link_libraries(agent-cli PRIVATE agent_cli_lib agent_metrics agent_tools)
+
+if(WIN32)
+    target_link_libraries(agent-cli PRIVATE shell32)
+endif()
 
 # 统一输出到 build/<preset>/bin/<config>/，避免模块目录调整影响可执行文件路径
 set_target_properties(agent-cli PROPERTIES

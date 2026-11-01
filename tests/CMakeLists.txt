@@ -28,6 +28,12 @@ add_executable(agent_runtime_tests
 target_include_directories(agent_runtime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(agent_runtime_tests PRIVATE agent_runtime agent_third_party)
 
+add_executable(agent_tools_tests
+    tools_test.cpp
+)
+target_include_directories(agent_tools_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(agent_tools_tests PRIVATE agent_tools agent_third_party)
+
 add_executable(agent_cli_tests
     cli_test.cpp
     cli_options_test.cpp
@@ -47,6 +53,7 @@ add_test(NAME agent_transport_tests COMMAND agent_transport_tests)
 add_test(NAME agent_model_tests COMMAND agent_model_tests)
 add_test(NAME agent_metrics_tests COMMAND agent_metrics_tests)
 add_test(NAME agent_runtime_tests COMMAND agent_runtime_tests)
+add_test(NAME agent_tools_tests COMMAND agent_tools_tests)
 add_test(NAME agent_cli_tests COMMAND agent_cli_tests)
 if(WIN32)
     add_test(NAME agent_transport_winhttp_tests COMMAND agent_transport_winhttp_tests)
