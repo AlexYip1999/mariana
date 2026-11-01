@@ -12,23 +12,23 @@ namespace agent::model
 namespace
 {
 
-const char* RoleToString(agent::core::ChatRole role)
+const char* RoleToString(core::ChatRole role)
 {
     switch (role)
     {
-    case agent::core::ChatRole::System:
+    case core::ChatRole::System:
         return "system";
-    case agent::core::ChatRole::User:
+    case core::ChatRole::User:
         return "user";
-    case agent::core::ChatRole::Assistant:
+    case core::ChatRole::Assistant:
         return "assistant";
-    case agent::core::ChatRole::Tool:
+    case core::ChatRole::Tool:
         return "tool";
     }
     return "user";
 }
 
-std::string FormatHttpError(const agent::transport::HttpResponse& response)
+std::string FormatHttpError(const transport::HttpResponse& response)
 {
     std::string message = "HTTP " + std::to_string(response.status);
     try
@@ -59,9 +59,9 @@ std::int64_t ReadUsageInt(const nlohmann::json& usage, const char* key)
 } // namespace
 
 OpenAiChatModel::OpenAiChatModel(transport::HttpTransport& transport, OpenAiConfig config)
-    : m_transport(transport), m_config(std::move(config))
-{
-}
+    : m_transport(transport)
+    , m_config(std::move(config))
+{}
 
 core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
 {

@@ -38,9 +38,9 @@ agent::core::ChatUsage MakeUsage(std::int64_t prompt_tokens, std::int64_t comple
 class FakeSteadyClock
 {
   public:
-    explicit FakeSteadyClock(std::vector<std::chrono::steady_clock::time_point> points) : m_points(std::move(points))
-    {
-    }
+    explicit FakeSteadyClock(std::vector<std::chrono::steady_clock::time_point> points)
+        : m_points(std::move(points))
+    {}
 
     std::chrono::steady_clock::time_point Now()
     {
@@ -194,9 +194,53 @@ TEST_CASE("collects usage speed and cost")
     CHECK(snapshot.total_cost > 0.0);
 
     const std::string line = agent::plugins::metrics::FormatMetricsLine(snapshot);
+    CHECK(metrics.CurrentSessionLine() == line);
     CHECK(line.find("1 轮 1 步") != std::string::npos);
     CHECK(line.find("200 tok/s") != std::string::npos);
     CHECK(line.find("缓存 90.0%") != std::string::npos);
     CHECK(line.find("上下文 0.2%") != std::string::npos);
     CHECK(line.find("≈ ¥") != std::string::npos);
+}
+
+TEST_CASE("keeps context usage after response without usage")
+{
+    std::vector<std::chrono::steady_clock::time_point> points;
+    points.push_back(std::chrono::steady_clock::time_point{});
+    points.push_back(std::chrono::steady_clock::time_point{} + std::chrono::seconds{1});
+    points.push_back(std::chrono::steady_clock::time_point{} + std::chrono::seconds{2});
+    points.push_back(std::chrono::steady_clock::time_point{} + std::chrono::seconds{3});
+    auto clock = std::make_shared<FakeSteadyClock>(std::move(points));
+
+    agent::plugins::metrics::MetricsCollector metrics(
+        "deepseek", 1000000, agent::plugins::metrics::CostEstimator::DeepSeekCnyDefaults(),
+        [clock]()
+        {
+            return clock->Now();
+        },
+        []
+        {
+            return UtcTime(2026, 11, 2, 0);
+        });
+
+    agent::core::ChatRequest request;
+    request.model = "deepseek-flash";
+
+    agent::core::ChatResponse first;
+    first.ok = true;
+    first.usage = MakeUsage(2000, 400, 1800, 200);
+    metrics.OnTurnStart();
+    metrics.OnModelRequest(request);
+    metrics.OnModelResponse(first);
+    CHECK(metrics.Snapshot().context_usage_percent == doctest::Approx(0.2));
+
+    agent::core::ChatResponse failed;
+    failed.ok = false;
+    failed.error = "timeout";
+    metrics.OnTurnStart();
+    metrics.OnModelRequest(request);
+    metrics.OnModelResponse(failed);
+
+    CHECK(metrics.Snapshot().context_usage_percent == doctest::Approx(0.2));
+    CHECK(metrics.Snapshot().last_tokens_per_second == doctest::Approx(0.0));
+    CHECK(metrics.Snapshot().has_usage);
 }

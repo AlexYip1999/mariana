@@ -9,6 +9,8 @@
        Applies to block braces AND to nested entries of multi-line braced
        initializer lists. Single-line statements ending with ';' are exempt
        (e.g. 'return {};', 'std::vector<int> v = {1, 2};').
+       Empty function bodies may stay on one line: 'virtual void OnTurnStart() {}'.
+       Constructor initializer lists are followed by '{}' on its own line.
        Rejects "if (...) { ... }", "} else {", and
        '{agent::core::ChatRole::User, "hi"},'.
     Skips build/, third_party/, .git/.
@@ -108,6 +110,18 @@ foreach ($f in $files) {
             continue
         }
 
+        # Empty function bodies may stay on one line: 'void OnTurnStart() {}'.
+        # Exclude control-flow blocks so 'if (ok) {}' is still rejected.
+        if ($code -match '\)\s*(const\s*)?(override\s*)?\{\s*\}\s*$' -and
+            $code -notmatch '^\s*(if|for|while|switch|catch)\s*\(') {
+            continue
+        }
+
+        # Constructor with initializer list: body is '{}' on its own line.
+        if ($code.Trim() -eq "{}") {
+            continue
+        }
+
         # A right brace (block or multi-line braced-list entry) must be the
         # first non-whitespace character of the line.
         if ($code -notmatch "^\s*}") {
@@ -137,7 +151,7 @@ if ($formatFailures.Count -gt 0 -or $braceViolations.Count -gt 0) {
         foreach ($v in $braceViolations) {
             Write-Host ("    {0}:{1}  {2}" -f $v.File, $v.Line, $v.Text)
         }
-        Write-Host "  Rule: '}' must start a line (indentation allowed) — block braces and multi-line braced-list entries; single-line statements ending with ';' are exempt." -ForegroundColor Yellow
+        Write-Host "  Rule: '}' must start a line (indentation allowed) — block braces and multi-line braced-list entries; single-line statements ending with ';', empty function bodies '{}', and constructor-body '{}' are exempt." -ForegroundColor Yellow
     }
 
     exit 1

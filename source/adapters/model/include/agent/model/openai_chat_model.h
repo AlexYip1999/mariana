@@ -17,15 +17,15 @@ struct OpenAiConfig
 };
 
 /// OpenAI 兼容协议适配器（DeepSeek 也走这套），非流式 /chat/completions。
-class OpenAiChatModel : public agent::core::ChatModel
+class OpenAiChatModel : public core::ChatModel
 {
   public:
-    OpenAiChatModel(agent::transport::HttpTransport& transport, OpenAiConfig config);
+    OpenAiChatModel(transport::HttpTransport& transport, OpenAiConfig config);
 
-    agent::core::ChatResponse Chat(const agent::core::ChatRequest& request) override;
+    core::ChatResponse Chat(const core::ChatRequest& request) override;
 
   private:
-    agent::transport::HttpTransport& m_transport;
+    transport::HttpTransport& m_transport;
     OpenAiConfig m_config;
 };
 

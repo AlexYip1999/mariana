@@ -76,12 +76,6 @@ CliParseResult ParseCliOptions(const std::vector<std::string>& args)
         result.options.mode = CliMode::Version;
         return result;
     }
-    if (init_config && interactive)
-    {
-        result.ok = false;
-        result.error = "--init-config cannot be combined with --interactive";
-        return result;
-    }
     if (init_config && !result.options.question.empty())
     {
         result.ok = false;
@@ -96,6 +90,14 @@ CliParseResult ParseCliOptions(const std::vector<std::string>& args)
     }
 
     if (init_config)
+    {
+        result.options.init_config = true;
+    }
+    if (init_config && interactive)
+    {
+        result.options.mode = CliMode::Interactive;
+    }
+    else if (init_config)
     {
         result.options.mode = CliMode::InitConfig;
     }

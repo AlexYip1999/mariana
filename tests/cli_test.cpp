@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -265,7 +266,8 @@ TEST_CASE("runs a single question and prints content")
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
     std::ostringstream out;
     std::ostringstream err;
-    const int exit_code = agent::hosts::cli::RunCli({"hello"}, adapter, MakeCliConfig(), out, err);
+    agent::runtime::ServiceRegistry services;
+    const int exit_code = agent::hosts::cli::RunCli({"hello"}, adapter, MakeCliConfig(), out, err, services);
 
     CHECK(exit_code == 0);
     CHECK(out.str().find("hello") != std::string::npos);
@@ -293,7 +295,8 @@ TEST_CASE("reports model errors")
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
     std::ostringstream out;
     std::ostringstream err;
-    const int exit_code = agent::hosts::cli::RunCli({"hello"}, adapter, MakeCliConfig(), out, err);
+    agent::runtime::ServiceRegistry services;
+    const int exit_code = agent::hosts::cli::RunCli({"hello"}, adapter, MakeCliConfig(), out, err, services);
 
     CHECK(exit_code == 1);
     CHECK(err.str().find("timeout") != std::string::npos);
@@ -305,7 +308,8 @@ TEST_CASE("rejects empty question")
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
     std::ostringstream out;
     std::ostringstream err;
-    const int exit_code = agent::hosts::cli::RunCli({}, adapter, MakeCliConfig(), out, err);
+    agent::runtime::ServiceRegistry services;
+    const int exit_code = agent::hosts::cli::RunCli({}, adapter, MakeCliConfig(), out, err, services);
 
     CHECK(exit_code == 2);
     CHECK(err.str().find("usage") != std::string::npos);
@@ -323,7 +327,8 @@ TEST_CASE("interactive chat keeps history and handles commands")
     std::istringstream input("hello\nworld\n/clear\nafter clear\n/exit\n");
     std::ostringstream output;
     std::ostringstream error;
-    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error);
+    agent::runtime::ServiceRegistry services;
+    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, services);
 
     CHECK(exit_code == 0);
     CHECK(adapter.requests.size() == 3);
@@ -344,6 +349,27 @@ TEST_CASE("interactive chat keeps history and handles commands")
     CHECK(output.str().find("history cleared") != std::string::npos);
 }
 
+TEST_CASE("one-shot reports stats when enabled")
+{
+    FakeChatModel adapter;
+    adapter.replies = {"hello"};
+
+    std::ostringstream output;
+    std::ostringstream error;
+    const auto metrics = std::make_shared<agent::plugins::metrics::MetricsCollector>();
+    agent::runtime::ServiceRegistry services;
+    services.Set<agent::core::Tracer>(metrics);
+    services.Set<agent::core::StatsView>(metrics);
+
+    const int exit_code = agent::hosts::cli::RunCli({"hi"}, adapter, MakeCliConfig(), output, error, services);
+
+    CHECK(exit_code == 0);
+    CHECK(output.str().find("hello") != std::string::npos);
+    CHECK(error.str().find("[stats]") != std::string::npos);
+    CHECK(metrics->Snapshot().turns == 1);
+    CHECK(metrics->Snapshot().steps == 1);
+}
+
 TEST_CASE("interactive reports metrics when enabled")
 {
     FakeChatModel adapter;
@@ -355,12 +381,15 @@ TEST_CASE("interactive reports metrics when enabled")
     std::istringstream input("hi\n/exit\n");
     std::ostringstream output;
     std::ostringstream error;
-    agent::plugins::metrics::MetricsCollector metrics;
-    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, &metrics, true);
+    const auto metrics = std::make_shared<agent::plugins::metrics::MetricsCollector>();
+    agent::runtime::ServiceRegistry services;
+    services.Set<agent::core::Tracer>(metrics);
+    services.Set<agent::core::StatsView>(metrics);
+    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, services, true);
 
     CHECK(exit_code == 0);
-    CHECK(metrics.Snapshot().turns == 1);
-    CHECK(metrics.Snapshot().steps == 1);
+    CHECK(metrics->Snapshot().turns == 1);
+    CHECK(metrics->Snapshot().steps == 1);
     CHECK(error.str().find("[stats]") != std::string::npos);
 }
 
@@ -375,10 +404,13 @@ TEST_CASE("interactive stats command reports current session")
     std::istringstream input("hi\n/stats\n/exit\n");
     std::ostringstream output;
     std::ostringstream error;
-    agent::plugins::metrics::MetricsCollector metrics;
-    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, &metrics, false);
+    const auto metrics = std::make_shared<agent::plugins::metrics::MetricsCollector>();
+    agent::runtime::ServiceRegistry services;
+    services.Set<agent::core::Tracer>(metrics);
+    services.Set<agent::core::StatsView>(metrics);
+    const int exit_code = agent::hosts::cli::RunInteractive(adapter, config, input, output, error, services, false);
 
     CHECK(exit_code == 0);
-    CHECK(metrics.Snapshot().turns == 1);
+    CHECK(metrics->Snapshot().turns == 1);
     CHECK(output.str().find("[stats]") != std::string::npos);
 }

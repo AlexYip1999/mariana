@@ -14,7 +14,7 @@ constexpr double PEAK_MULTIPLIER = 2.0;
 constexpr std::int64_t SECONDS_PER_HOUR = 3600;
 constexpr std::int64_t BEIJING_UTC_OFFSET_HOURS = 8;
 
-std::int64_t ResolveCacheMissTokens(const agent::core::ChatUsage& usage)
+std::int64_t ResolveCacheMissTokens(const core::ChatUsage& usage)
 {
     if (usage.prompt_cache_hit_tokens + usage.prompt_cache_miss_tokens == 0 && usage.prompt_tokens > 0)
     {
@@ -119,8 +119,7 @@ void CostEstimator::SetPricing(const std::string& provider, const std::string& m
 }
 
 CostEstimate CostEstimator::Estimate(const std::string& provider, const std::string& model,
-                                     const agent::core::ChatUsage& usage,
-                                     std::chrono::system_clock::time_point time) const
+                                     const core::ChatUsage& usage, std::chrono::system_clock::time_point time) const
 {
     CostEstimate estimate;
     const auto provider_pricing = m_pricing.find(provider);

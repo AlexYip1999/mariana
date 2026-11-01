@@ -13,7 +13,9 @@
 | `source/adapters/` | 平台 / 协议适配器（transport、model 已定义；storage 待建） |
 | `source/adapters/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
 | `source/adapters/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 adapters |
-| `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮问答） |
+| `source/runtime/` | 通用 Agent 运行时：`AgentSession` + 外层 `SessionDriver` 接口 |
+| `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
+| `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮/交互式、`--stats`） |
 | `tests/` | 单元测试（doctest） |
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
 | `third_party/` | 单头依赖（nlohmann/json、doctest） |

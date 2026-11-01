@@ -47,7 +47,7 @@ class CostEstimator
 
     void SetPricing(const std::string& provider, const std::string& model, const ModelPricing& pricing);
 
-    CostEstimate Estimate(const std::string& provider, const std::string& model, const agent::core::ChatUsage& usage,
+    CostEstimate Estimate(const std::string& provider, const std::string& model, const core::ChatUsage& usage,
                           std::chrono::system_clock::time_point time) const;
 
     /// DeepSeek 国际区 peak：UTC 01:00-04:00、06:00-10:00，周一至周五。

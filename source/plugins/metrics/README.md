@@ -7,13 +7,19 @@
 - 缓存命中率
 - 输出速度（completion tokens / 模型耗时）
 - 上下文占用（prompt tokens / 1M context window）
-- 估算费用（USD）
+- 估算费用（默认 CNY，可切 USD）
 
 ## 文件
 
-- `metrics_collector.*`：实现 `agent::core::Tracer`，累计指标；`OnTurnStart()` 由宿主每轮调用
+- `metrics_collector.*`：实现 `agent::core::Tracer` + `agent::core::StatsView`；采集由 `AgentSession` 发出的事件驱动
 - `cost_estimator.*`：DeepSeek 价格表、peak/off-peak 判断、费用计算
 - `metrics_formatter.*`：输出一行状态文本
+
+## 接口
+
+- 采集：`Tracer::OnTurnStart()` / `OnModelRequest()` / `OnModelResponse()` / `OnToolCall()` / `OnToolResult()`
+- 展示：`StatsView::CurrentSessionLine()`
+- 组合根把 metrics 注册到 `ServiceRegistry`，host 从 registry 解析 `Tracer` / `StatsView`，不 include 具体 metrics 类型
 
 ## 使用
 

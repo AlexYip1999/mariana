@@ -19,9 +19,9 @@ struct WinHttpHandle
 
     WinHttpHandle() = default;
 
-    explicit WinHttpHandle(HINTERNET handle) : value(handle)
-    {
-    }
+    explicit WinHttpHandle(HINTERNET handle)
+        : value(handle)
+    {}
 
     ~WinHttpHandle()
     {

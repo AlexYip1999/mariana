@@ -13,6 +13,9 @@ class Tracer
   public:
     virtual ~Tracer() = default;
 
+    /// 一次用户轮次开始；默认空实现，具体 Tracer 按需覆盖。
+    virtual void OnTurnStart() {}
+
     virtual void OnModelRequest(const ChatRequest& request) = 0;
     virtual void OnModelResponse(const ChatResponse& response) = 0;
     virtual void OnToolCall(const ToolCall& call) = 0;
@@ -23,18 +26,13 @@ class Tracer
 class NullTracer : public Tracer
 {
   public:
-    void OnModelRequest(const ChatRequest&) override
-    {
-    }
-    void OnModelResponse(const ChatResponse&) override
-    {
-    }
-    void OnToolCall(const ToolCall&) override
-    {
-    }
-    void OnToolResult(const ToolCall&, const ToolResult&) override
-    {
-    }
+    void OnModelRequest(const ChatRequest&) override {}
+
+    void OnModelResponse(const ChatResponse&) override {}
+
+    void OnToolCall(const ToolCall&) override {}
+
+    void OnToolResult(const ToolCall&, const ToolResult&) override {}
 };
 
 } // namespace agent::core

@@ -18,6 +18,7 @@ enum class CliMode
 struct CliOptions
 {
     CliMode mode = CliMode::Chat;
+    bool init_config = false;
     std::string config_path;
     std::vector<std::string> question;
     bool stats = false;

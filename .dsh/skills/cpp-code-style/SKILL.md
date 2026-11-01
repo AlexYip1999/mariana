@@ -1,6 +1,6 @@
 ---
 name: cpp-code-style
-description: 用于在 agent-core 项目中新增、修改、评审或提交 C++ 代码时。强制项目代码规范：Allman 大括号（右大括号必须独占一行）、PascalCase 命名（类型/函数）、snake_case 命名（变量/文件，成员变量 m_ 前缀）、长布尔条件必须抽成命名函数、4 空格缩进、120 列，并在改完代码后运行 scripts/format.ps1、scripts/check-format.ps1、scripts/verify.ps1。任何 .h/.hpp/.cpp 改动后都必须使用。
+description: 用于在 agent-core 项目中新增、修改、评审或提交 C++ 代码时。强制项目代码规范：Allman 大括号（右大括号必须独占一行）、PascalCase 命名（类型/函数）、snake_case 命名（变量/文件，成员变量 m_ 前缀）、长布尔条件必须抽成命名函数、namespace 内部使用相对限定名、4 空格缩进、120 列，并在改完代码后运行 scripts/format.ps1、scripts/check-format.ps1、scripts/verify.ps1。任何 .h/.hpp/.cpp 改动后都必须使用。
 ---
 
 # C++ 代码规范（agent-core）
@@ -15,9 +15,10 @@ description: 用于在 agent-core 项目中新增、修改、评审或提交 C++
    - 块级大括号（函数 / 控制流 / namespace 等）；
    - 多行花括号初始化列表里的每个嵌套元素（`{`、`}` 都独占一行）。
    - 例外：单行语句（以 `;` 结尾）可保持紧凑，如 `return {};`、`std::vector<int> v = {1, 2};`。
+   - 例外：**空函数体写成 `{}` 单行**，如 `virtual void OnTurnStart() {}`。
    - 禁止：`if (ok) { Do(); }`、`} else {`、多行列表中的 `{agent::core::ChatRole::User, "hi"},`。
-   - 允许：`};`、`}  // namespace agent::core`。
-2. **左大括号同样换行**（Allman）。大括号位置由 `.clang-format` 决定，不要手调。
+   - 允许：`};`、`}  // namespace agent::core`、`void f() {}`。
+2. **左大括号同样换行**（Allman）。大括号位置由 `.clang-format` 决定，不要手调；空函数体例外，允许 `{}` 单行。
 3. 缩进 4 空格、不使用 Tab、行宽 120。
 4. 格式以 `clang-format` 的结果为准，不要凭感觉"看起来对齐"。
 5. **长布尔条件必须抽成命名函数**，不要在 `if` / `while` / 三元表达式里堆长条件。
@@ -125,6 +126,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 ## 其他约定
 
 - 头文件使用 `#pragma once`；include 分组与排序交给 clang-format。
+- **函数/方法定义之间必须空一行**（包括空实现的 override，如 `NullTracer`）；不要写成连续贴在一起。
+  - `.clang-format` 已配置 `SeparateDefinitionBlocks: Always`；
+  - **空函数体写成 `{}` 单行**，如 `virtual void OnTurnStart() {}`；`.clang-format` 已配置 `AllowShortFunctionsOnASingleLine: Empty`。
+  - **带初始化列表的构造函数**：初始化列表换行，`{}` 单独一行；多个初始化项时逗号放行首：
+
+    ```cpp
+    explicit FakeSteadyClock(std::vector<std::chrono::steady_clock::time_point> points)
+        : m_points(std::move(points))
+    {}
+
+    OpenAiChatModel::OpenAiChatModel(transport::HttpTransport& transport, OpenAiConfig config)
+        : m_transport(transport)
+        , m_config(std::move(config))
+    {}
+    ```
+
+    对应配置：`PackConstructorInitializers: Never`、`BreakConstructorInitializers: BeforeComma`、`BraceWrapping.SplitEmptyFunction: false`。
+  - 非空函数体仍保持 Allman：`{` 和 `}` 各占一行。
+- **namespace 内部使用相对限定名**：在 `namespace agent::...` 内引用 `agent` 下的兄弟命名空间时，写 `core::`、`model::`、`transport::`、`runtime::`、`plugins::`，不要重复 `agent::`。
+  - 例：`namespace agent::runtime` 内写 `core::ChatModel`，而不是 `agent::core::ChatModel`；
+  - `main.cpp` 等全局作用域、以及 `tests/` 里不在 `agent` 命名空间内的代码，仍使用完整 `agent::...`。
 - **不要格式化或修改 `third_party/`、`build/`**。
 - 不要修改 `.clang-format`、`scripts/*.ps1`，除非任务明确就是改规范；规范变更单独提交。
 - core 层禁止 include UE / 平台 / 网络库头文件；依赖通过接口（见 `Agent项目-实施路径.md`）。
@@ -133,8 +155,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 
 - [ ] `scripts/check-format.ps1` 通过（退出码 0）
 - [ ] `scripts/verify.ps1` 通过（或格式、构建、测试分别通过）
-- [ ] 块级 `}` 和多行初始化列表的 `}` 都在行首（单行语句 / `return {};` 除外）
+- [ ] 块级 `}` 和多行初始化列表的 `}` 都在行首（单行语句 / `return {};` / 空函数 `{}` 除外）
 - [ ] 命名符合规范：类型/函数 PascalCase，变量/文件 snake_case，成员变量 `m_` 前缀
 - [ ] 长布尔条件已抽成命名函数（`Is...` / `Has...` / `Can...`）
+- [ ] 函数/方法定义之间有空行（包括空实现的 override）
+- [ ] 空函数体写成 `{}` 单行（`virtual void OnTurnStart() {}`）
+- [ ] 带初始化列表的空构造函数写成初始化列表 + 单独一行 `{}`
+- [ ] 多初始化项的逗号在行首（`, m_config(...)`）
+- [ ] `agent::...` namespace 内部使用相对限定名（`core::` / `model::` / `transport::` / `runtime::` / `plugins::`）
 - [ ] `third_party/`、`build/` 未被改动
 - [ ] `git status` 无意外文件

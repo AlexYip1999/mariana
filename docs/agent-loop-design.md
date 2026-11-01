@@ -209,6 +209,7 @@ class Tracer
   public:
     virtual ~Tracer() = default;
 
+    virtual void OnTurnStart() {}
     virtual void OnModelRequest(const ChatRequest& request) = 0;
     virtual void OnModelResponse(const ChatResponse& response) = 0;
     virtual void OnToolCall(const ToolCall& call) = 0;
@@ -217,6 +218,19 @@ class Tracer
 ```
 
 A2 先提供 `NullTracer`；A2.2 再加文件 trace（JSONL，写入 `traces/`）。
+
+多观察者用 `CompositeTracer`：
+
+```cpp
+auto tracer = std::make_shared<CompositeTracer>();
+tracer->Add(metrics);
+tracer->Add(file_trace);
+services.Set<Tracer>(tracer);
+```
+
+- `Tracer` 是只读观察者，不能修改请求/响应；
+- 需要审批、脱敏、限流时用独立 `ModelInterceptor` / `ToolInterceptor`；
+- 不要让插件继承 `AgentSession` 来 override。
 
 ## 5. AgentRunner（默认 ReAct 执行器）
 
@@ -487,6 +501,15 @@ traces/
   2026-11-01T...jsonl
 ```
 
+多个观察者（metrics、文件 trace、UI）通过 `CompositeTracer` 组合，Session/Runner 只依赖一个 `Tracer`：
+
+```cpp
+auto tracer = std::make_shared<CompositeTracer>();
+tracer->Add(metrics);
+tracer->Add(file_trace);
+services.Set<Tracer>(tracer);
+```
+
 事件字段建议：
 
 - `event`: `model_request` / `model_response` / `tool_call` / `tool_result`
@@ -553,6 +576,9 @@ traces/
 | 低代码 Flow | 原语稳定后，以节点/端口/上下文 schema 为基础单独做 |
 | 应用上下文 | `ContextProvider` 接口；Profile 选择 provider |
 | MCP 远程工具 | 每个 MCP tool 对应一个 `McpTool`；McpClient/连接管理放 `source/plugins/mcp` |
+| 插件系统 | `PluginManifest` + `PluginKind` + 动态 loader；`source/plugins` |
+| 服务/插件实例 | `ServiceRegistry` + 稳定 service id；agent/runtime 层 |
+| Agent 组合根 | `AgentRuntime` + `AgentServices`，宿主负责组装 |
 | 异步 ReAct | `AgentRunner::Step()` 与循环驱动分离，未来用事件队列调用 Step |
 | Router / Worker | `Conversation` + `AgentExecutor` 可实例化多个，Router 负责分配 |
 | 多会话 | Conversation 可序列化、带 session_id |
@@ -560,7 +586,239 @@ traces/
 | UE 宿主 | 只换 host，`AgentExecutor` 不变 |
 | 会话持久化 | Conversation 通过 `MessageStore` 接口落盘 |
 
-## 12. 已达成共识与待确认决策
+## 12. 插件化与服务模型
+
+### 12.1 原则：能力插件化，内核稳定
+
+借鉴 DeepSeek Harness 的插件思想，但不做成“字面上的万物皆插件”：
+
+```text
+Kernel（agent/runtime 层，稳定）
+├── 插件加载器 / 生命周期
+├── ServiceRegistry / ToolRegistry
+├── manifest / 版本 / 依赖解析
+├── 权限 / 沙箱 / 审批
+├── 消息协议 / 事件总线
+└── AgentRuntime / Policy / Tracer
+
+Core（稳定契约）
+├── ChatModel
+├── Tool / ToolSpec / ToolResult
+├── ContextProvider
+├── AgentExecutor
+├── Conversation
+└── Message / Usage
+
+Plugins（可替换能力）
+├── Tool plugins
+├── ContextProvider plugins
+├── Executor plugins
+├── Model plugins
+├── Tracer plugins
+└── EventSource plugins（以后）
+```
+
+判断标准：
+
+- **能力**可以插件化；
+- **加载、注册、权限、协议、生命周期**必须留在内核；
+- 否则会出现插件 API 不稳定、依赖地狱、权限漏洞和调试困难。
+
+### 12.2 插件与服务不是一回事
+
+| 概念 | 含义 |
+|---|---|
+| 插件 | 可加载、可发布的代码/资源包 |
+| 服务/插件实例 | 插件注册到运行时里的实例 |
+| 能力 | 组件暴露给 Agent/工具使用的接口 |
+
+一个插件可以注册多个组件；一个组件可以来自内置代码，也可以来自动态插件。
+
+### 12.3 PluginManifest
+
+```cpp
+enum class PluginKind
+{
+    Tool,
+    ContextProvider,
+    Executor,
+    Model,
+    Tracer,
+    EventSource,
+};
+
+struct PluginManifest
+{
+    std::string name;
+    std::string version;
+    PluginKind kind;
+    std::string entry;
+    std::vector<std::string> dependencies;
+    std::vector<std::string> permissions;
+};
+```
+
+约束：
+
+- 插件名唯一；
+- 版本遵循 semver；
+- `dependencies` 只声明加载顺序/服务依赖，不自动解决复杂依赖图；
+- 权限先做声明和校验，具体沙箱能力后续加；
+- 动态插件用稳定服务 ID / C ABI，不跨 DLL 传 C++ 对象。
+
+### 12.4 ServiceRegistry
+
+放在 agent/runtime 层，不放进 core。
+
+当前实现（静态插件/内置服务）：
+
+```cpp
+class ServiceRegistry
+{
+  public:
+    template <typename T>
+    void Set(std::shared_ptr<T> service);
+
+    template <typename T>
+    std::shared_ptr<T> Get() const;
+
+    /// 存在则返回，不存在则调用 factory 创建并注册。
+    template <typename T>
+    std::shared_ptr<T> CreateOrGet(const std::function<std::shared_ptr<T>()>& factory);
+};
+```
+
+用途：
+
+- 内置插件/静态插件按接口类型注册和查找；
+- `CreateOrGet` 用于可选服务（tracer、world、logger）的懒创建；
+- 动态插件以后增加 service_id 重载，避免跨 DLL RTTI/ABI 问题；
+- 必需服务（model、tools、executor）仍优先显式注入。
+
+### 12.5 依赖注入优先，服务查询补充
+
+| 依赖类型 | 推荐方式 |
+|---|---|
+| 必需依赖（model、tools、executor） | 构造函数/AgentServices 注入 |
+| 可选环境服务（world、logger、event） | `ServiceRegistry::Get` |
+| 插件之间强依赖 | manifest + 加载顺序，或显式注入 |
+
+不要在工具/插件内部到处 `GetComponent`，否则依赖关系会变成隐式的，测试和初始化顺序都会变难。
+
+### 12.6 AgentRuntime 作为组合根
+
+```cpp
+struct AgentServices
+{
+    AgentProfile profile;
+    std::shared_ptr<ChatModel> model;
+    std::shared_ptr<ToolRegistry> tools;
+    std::vector<std::shared_ptr<ContextProvider>> contexts;
+    std::shared_ptr<Tracer> tracer;
+    std::shared_ptr<AgentExecutor> executor;
+    ServiceRegistry* services = nullptr;
+};
+
+class AgentRuntime
+{
+  public:
+    AgentRuntime(std::string agent_id, AgentServices services);
+
+    AgentRunResult RunTurn(const std::string& user_input);
+    const Conversation& ConversationState() const;
+
+  private:
+    std::string m_agent_id;
+    AgentServices m_services;
+    Conversation m_conversation;
+};
+```
+
+- 通用层不绑定 NPC/UE/CLI；
+- 一 NPC 一 Agent 只是宿主的一种组装方式；
+- 多 Agent 编排（Router/Orchestrator）不放进 AgentRuntime。
+
+### 12.7 双层循环与 SessionDriver
+
+外层循环（交互方式）也可以插件化/低代码化：
+
+```text
+外层：SessionDriver
+  决定“什么时候 RunTurn、Run 多少次、输入从哪来、输出到哪”
+    ↓
+内层：AgentExecutor / AgentRunner
+  决定“一次 RunTurn 里，模型↔工具循环怎么跑”
+```
+
+接口草案：
+
+```cpp
+class InputSource
+{
+  public:
+    virtual ~InputSource() = default;
+    virtual std::optional<std::string> Next() = 0;
+};
+
+class OutputSink
+{
+  public:
+    virtual ~OutputSink() = default;
+    virtual void OnResult(const AgentRunResult& result) = 0;
+};
+
+class SessionDriver
+{
+  public:
+    virtual ~SessionDriver() = default;
+    virtual int Run(AgentSession& session, InputSource& input, OutputSink& output) = 0;
+};
+```
+
+默认 Driver：
+
+| Driver | 行为 |
+|---|---|
+| `OneShotDriver` | 取一次输入 → `RunTurn` → 输出 → 退出 |
+| `InteractiveDriver` | 循环读输入 → `RunTurn` → 维持 Conversation |
+| `EventDriver`（以后） | IM/UE/文件事件 → `RunTurn` |
+| `FlowDriver`（以后） | 低代码节点图控制外层循环 |
+
+关键点：
+
+- `AgentSession::RunTurn(user_input)` 是唯一执行入口；
+- 单轮/交互/事件/低代码都调用它；
+- 单轮/交互只是外层 Driver 不同，不产生两个 Agent 类型；
+- 低代码 Flow 是另一个 Driver，节点包括 input/agent/condition/tool/loop/output；
+- 内层 AgentExecutor 仍负责一次 RunTurn 里的模型↔工具循环。
+
+当前实现策略：
+
+1. 先引入 `AgentSession`，单轮/交互共用 `RunTurn`；
+2. 暂用 `ChatModel::Chat()` 执行单次模型调用；
+3. `AgentRunner` 完成后，把 `AgentSession` 内部切换到 `AgentExecutor`；
+4. 再抽 `SessionDriver` 接口和默认 Driver。
+
+组件化约束：
+
+- `AgentSession` 使用 `AgentSessionDependencies` 接收依赖，而不是不断扩构造参数；
+- 必需依赖（model、未来的 tools/executor）放依赖结构显式注入；
+- 可选服务（world/logger/event）通过 `ServiceRegistry` 查询；
+- 新增组件时只给依赖结构与 `AgentServices` 加字段，不改 `RunTurn` 签名；
+- 轮次开始由 `Tracer::OnTurnStart()` 发出，host 不直接调用具体 metrics 插件。
+
+### 12.8 实施顺序
+
+1. Tool 插件：`Tool` + `ToolRegistry` + 第一个 `read_file`；
+2. ServiceRegistry：给工具/插件提供可选服务查询；
+3. 动态 Tool 插件：manifest + 加载器 + C ABI；
+4. ContextProvider 插件；
+5. Executor 插件；
+6. Skill / Command / EventSource 插件。
+
+每一步只开放一种插件能力，内核 API 稳定后再扩下一种。
+
+## 13. 已达成共识与待确认决策
 
 ### 已达成共识
 
@@ -570,6 +828,9 @@ traces/
 - 低代码 Flow 是上层产品形态，依赖稳定原语后再做；
 - Tool 属于插件能力层，`Tool` 接口在 core，`ToolRegistry` 在 agent 层；
 - MCP 是远程工具插件协议，不是单个 Tool；每个 MCP tool 以后映射为一个 `McpTool`；
+- 通用层不绑定 NPC/UE；Agent 是组件容器，由宿主组装；
+- 能力插件化，加载/注册/权限/生命周期留在内核；
+- 必需依赖优先构造注入，ServiceRegistry 只用于可选服务；
 - 方向与 DeepSeek 的插件化 + 编排/执行分离一致。
 
 ### 待确认决策
@@ -582,4 +843,7 @@ traces/
 6. `ContextProvider` 的位置与数据类型（JSON 字符串 vs 强类型结构）；
 7. trace 文件格式与落盘位置；
 8. CLI `--agent` 与 `--interactive` 的关系（新增模式 vs interactive 默认走 Agent）；
-9. Flow DSL 从什么时候开始设计（建议 A3 之后）。
+9. Flow DSL 从什么时候开始设计（建议 A3 之后）；
+10. ServiceRegistry 放 `source/agent` 还是独立 `source/plugins/runtime`；
+11. 服务 ID 用字符串/GUID/`std::type_index`，动态插件如何保持 ABI 稳定；
+12. PluginManifest 的权限模型与沙箱能力何时引入。

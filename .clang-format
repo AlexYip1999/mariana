@@ -7,10 +7,30 @@ TabWidth: 4
 UseTab: Never
 ColumnLimit: 120
 # Allman：所有大括号独占一行，右大括号 } 必须在行首
-BreakBeforeBraces: Allman
-AllowShortBlocksOnASingleLine: Never
-AllowShortFunctionsOnASingleLine: None
-AllowShortIfStatementsOnASingleLine: Never
+# 空函数体例外：{} 保持紧凑；带初始化列表的构造函数把 {} 放在初始化列表下一行
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterControlStatement: Always
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterExternBlock: true
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: true
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+# 空函数允许写成 {} 单行：virtual void OnTurnStart() {}
+AllowShortFunctionsOnASingleLine: Empty
+# 构造函数初始化列表必须换行，逗号放在行首
+PackConstructorInitializers: Never
+BreakConstructorInitializers: BeforeComma
+# 函数/方法定义之间必须空一行（包括空实现的 override）
+SeparateDefinitionBlocks: Always
 AllowShortLoopsOnASingleLine: false
 AllowShortCaseLabelsOnASingleLine: false
 AllowShortLambdasOnASingleLine: None

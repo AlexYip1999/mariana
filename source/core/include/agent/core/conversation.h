@@ -22,6 +22,14 @@ struct Conversation
         messages.push_back(std::move(message));
     }
 
+    void Append(ChatRole role, std::string content)
+    {
+        ChatMessage message;
+        message.role = role;
+        message.content = std::move(content);
+        messages.push_back(std::move(message));
+    }
+
     void Clear()
     {
         messages.clear();

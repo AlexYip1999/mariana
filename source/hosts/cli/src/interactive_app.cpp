@@ -1,24 +1,17 @@
 #include "agent/hosts/cli/interactive_app.h"
 
 #include <iostream>
+#include <memory>
 #include <string>
-#include <vector>
 
-#include "agent/plugins/metrics/metrics_formatter.h"
+#include "agent/core/stats_view.h"
+#include "agent/runtime/agent_session.h"
 
 namespace agent::hosts::cli
 {
 
 namespace
 {
-
-void AppendSystemPrompt(std::vector<core::ChatMessage>& history, const CliConfig& config)
-{
-    if (!config.system_prompt.empty())
-    {
-        history.push_back({core::ChatRole::System, config.system_prompt});
-    }
-}
 
 void PrintHelp(std::ostream& out)
 {
@@ -29,19 +22,29 @@ void PrintHelp(std::ostream& out)
         << "  /help   show this help\n";
 }
 
-void PrintMetrics(const agent::plugins::metrics::MetricsCollector* metrics, std::ostream& err)
+runtime::AgentSessionConfig MakeSessionConfig(const CliConfig& config)
 {
-    if (metrics != nullptr)
+    runtime::AgentSessionConfig session_config;
+    session_config.model = config.model;
+    session_config.system_prompt = config.system_prompt;
+    session_config.temperature = config.temperature;
+    session_config.max_tokens = config.max_tokens;
+    return session_config;
+}
+
+void PrintStats(const core::StatsView* stats, std::ostream& err)
+{
+    if (stats != nullptr)
     {
-        err << agent::plugins::metrics::FormatMetricsLine(metrics->Snapshot()) << "\n";
+        err << stats->CurrentSessionLine() << "\n";
     }
 }
 
-void PrintStatsCommand(const agent::plugins::metrics::MetricsCollector* metrics, std::ostream& out)
+void PrintStatsCommand(const core::StatsView* stats, std::ostream& out)
 {
-    if (metrics != nullptr)
+    if (stats != nullptr)
     {
-        out << agent::plugins::metrics::FormatMetricsLine(metrics->Snapshot()) << "\n";
+        out << stats->CurrentSessionLine() << "\n";
     }
     else
     {
@@ -51,11 +54,16 @@ void PrintStatsCommand(const agent::plugins::metrics::MetricsCollector* metrics,
 
 } // namespace
 
-int RunInteractive(agent::core::ChatModel& chat_model, const CliConfig& config, std::istream& in, std::ostream& out,
-                   std::ostream& err, agent::plugins::metrics::MetricsCollector* metrics, bool auto_print_stats)
+int RunInteractive(core::ChatModel& chat_model, const CliConfig& config, std::istream& in, std::ostream& out,
+                   std::ostream& err, runtime::ServiceRegistry& services, bool auto_print_stats)
 {
-    std::vector<core::ChatMessage> history;
-    AppendSystemPrompt(history, config);
+    const std::shared_ptr<core::StatsView> stats = services.Get<core::StatsView>();
+
+    runtime::AgentSessionDependencies dependencies;
+    dependencies.model = &chat_model;
+    dependencies.services = &services;
+
+    runtime::AgentSession session(MakeSessionConfig(config), dependencies);
 
     std::string line;
     while (true)
@@ -73,8 +81,7 @@ int RunInteractive(agent::core::ChatModel& chat_model, const CliConfig& config, 
         }
         if (line == "/clear")
         {
-            history.clear();
-            AppendSystemPrompt(history, config);
+            session.ClearHistory();
             out << "history cleared\n";
             continue;
         }
@@ -85,7 +92,7 @@ int RunInteractive(agent::core::ChatModel& chat_model, const CliConfig& config, 
         }
         if (line == "/stats")
         {
-            PrintStatsCommand(metrics, out);
+            PrintStatsCommand(stats.get(), out);
             continue;
         }
         if (line.empty())
@@ -93,41 +100,21 @@ int RunInteractive(agent::core::ChatModel& chat_model, const CliConfig& config, 
             continue;
         }
 
-        history.push_back({core::ChatRole::User, line});
-
-        core::ChatRequest request;
-        request.model = config.model;
-        request.temperature = config.temperature;
-        request.max_tokens = config.max_tokens;
-        request.messages = history;
-
-        if (metrics != nullptr)
+        const runtime::AgentRunResult result = session.RunTurn(line);
+        if (!result.ok)
         {
-            metrics->OnTurnStart();
-            metrics->OnModelRequest(request);
-        }
-
-        const core::ChatResponse response = chat_model.Chat(request);
-        if (metrics != nullptr)
-        {
-            metrics->OnModelResponse(response);
-        }
-        if (!response.ok)
-        {
-            history.pop_back();
-            err << "error: " << response.error << "\n";
+            err << "error: " << result.error << "\n";
             if (auto_print_stats)
             {
-                PrintMetrics(metrics, err);
+                PrintStats(stats.get(), err);
             }
             continue;
         }
 
-        out << response.content << "\n";
-        history.push_back({core::ChatRole::Assistant, response.content});
+        out << result.content << "\n";
         if (auto_print_stats)
         {
-            PrintMetrics(metrics, err);
+            PrintStats(stats.get(), err);
         }
     }
 

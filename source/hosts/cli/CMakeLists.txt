@@ -16,7 +16,7 @@ target_link_libraries(agent_cli_lib
         agent_core
         agent_model
         agent_transport
-        agent_metrics
+        agent_runtime
     PRIVATE
         agent_third_party
 )
@@ -25,7 +25,7 @@ add_executable(agent-cli
     src/main.cpp
 )
 
-target_link_libraries(agent-cli PRIVATE agent_cli_lib)
+target_link_libraries(agent-cli PRIVATE agent_cli_lib agent_metrics)
 
 # 统一输出到 build/<preset>/bin/<config>/，避免模块目录调整影响可执行文件路径
 set_target_properties(agent-cli PROPERTIES

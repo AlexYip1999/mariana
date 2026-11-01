@@ -11,6 +11,8 @@
 .\build\vs2022\bin\Debug\agent-cli.exe --init-config
 # 或指定路径
 .\build\vs2022\bin\Debug\agent-cli.exe --init-config --config .\my-config.local.json
+# 写入后直接进入交互模式
+.\build\vs2022\bin\Debug\agent-cli.exe --init-config --interactive
 
 # 单轮问答（需要 DEEPSEEK_API_KEY）
 $env:DEEPSEEK_API_KEY = "..."

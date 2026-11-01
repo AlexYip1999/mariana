@@ -39,6 +39,17 @@ TEST_CASE("parses init config mode")
 
     CHECK(result.ok);
     CHECK(result.options.mode == agent::hosts::cli::CliMode::InitConfig);
+    CHECK(result.options.init_config);
+}
+
+TEST_CASE("allows init config with interactive")
+{
+    const agent::hosts::cli::CliParseResult result =
+        agent::hosts::cli::ParseCliOptions({"--init-config", "--interactive"});
+
+    CHECK(result.ok);
+    CHECK(result.options.mode == agent::hosts::cli::CliMode::Interactive);
+    CHECK(result.options.init_config);
 }
 
 TEST_CASE("requires config path")
@@ -69,10 +80,6 @@ TEST_CASE("supports end of options marker")
 
 TEST_CASE("rejects conflicting modes")
 {
-    const agent::hosts::cli::CliParseResult init_and_interactive =
-        agent::hosts::cli::ParseCliOptions({"--init-config", "--interactive"});
-    CHECK_FALSE(init_and_interactive.ok);
-
     const agent::hosts::cli::CliParseResult interactive_with_question =
         agent::hosts::cli::ParseCliOptions({"--interactive", "hello"});
     CHECK_FALSE(interactive_with_question.ok);

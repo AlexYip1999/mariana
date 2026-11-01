@@ -1,4 +1,5 @@
 #include "agent/plugins/metrics/metrics_collector.h"
+#include "agent/plugins/metrics/metrics_formatter.h"
 
 #include <utility>
 
@@ -8,7 +9,7 @@ namespace agent::plugins::metrics
 namespace
 {
 
-bool HasUsage(const agent::core::ChatUsage& usage)
+bool HasUsage(const core::ChatUsage& usage)
 {
     return usage.prompt_tokens != 0 || usage.completion_tokens != 0 || usage.total_tokens != 0;
 }
@@ -17,9 +18,11 @@ bool HasUsage(const agent::core::ChatUsage& usage)
 
 MetricsCollector::MetricsCollector(std::string provider, std::int64_t context_window_tokens,
                                    CostEstimator cost_estimator, SteadyNow steady_now, SystemNow system_now)
-    : m_provider(std::move(provider)), m_cost_estimator(std::move(cost_estimator)),
-      m_context_window_tokens(context_window_tokens), m_steady_now(std::move(steady_now)),
-      m_system_now(std::move(system_now))
+    : m_provider(std::move(provider))
+    , m_cost_estimator(std::move(cost_estimator))
+    , m_context_window_tokens(context_window_tokens)
+    , m_steady_now(std::move(steady_now))
+    , m_system_now(std::move(system_now))
 {
     if (!m_steady_now)
     {
@@ -42,7 +45,7 @@ void MetricsCollector::OnTurnStart()
     ++m_snapshot.turns;
 }
 
-void MetricsCollector::OnModelRequest(const agent::core::ChatRequest& request)
+void MetricsCollector::OnModelRequest(const core::ChatRequest& request)
 {
     ++m_snapshot.steps;
     m_request_start = m_steady_now();
@@ -50,7 +53,7 @@ void MetricsCollector::OnModelRequest(const agent::core::ChatRequest& request)
     m_request_active = true;
 }
 
-void MetricsCollector::OnModelResponse(const agent::core::ChatResponse& response)
+void MetricsCollector::OnModelResponse(const core::ChatResponse& response)
 {
     double duration_seconds = 0.0;
     if (m_request_active)
@@ -64,25 +67,25 @@ void MetricsCollector::OnModelResponse(const agent::core::ChatResponse& response
     ApplyCost(response.usage);
 }
 
-void MetricsCollector::OnToolCall(const agent::core::ToolCall& call)
+void MetricsCollector::OnToolCall(const core::ToolCall& call)
 {
     (void)call;
     ++m_snapshot.steps;
 }
 
-void MetricsCollector::OnToolResult(const agent::core::ToolCall& call, const agent::core::ToolResult& result)
+void MetricsCollector::OnToolResult(const core::ToolCall& call, const core::ToolResult& result)
 {
     (void)call;
     (void)result;
 }
 
-void MetricsCollector::ApplyUsage(const agent::core::ChatResponse& response, double duration_seconds)
+void MetricsCollector::ApplyUsage(const core::ChatResponse& response, double duration_seconds)
 {
-    const agent::core::ChatUsage& usage = response.usage;
+    const core::ChatUsage& usage = response.usage;
     if (!HasUsage(usage))
     {
+        // 失败/无 usage 的响应不要覆盖上一次的上下文占用。
         m_snapshot.last_tokens_per_second = 0.0;
-        m_snapshot.context_usage_percent = 0.0;
         return;
     }
 
@@ -114,7 +117,7 @@ void MetricsCollector::ApplyUsage(const agent::core::ChatResponse& response, dou
     }
 }
 
-void MetricsCollector::ApplyCost(const agent::core::ChatUsage& usage)
+void MetricsCollector::ApplyCost(const core::ChatUsage& usage)
 {
     if (!m_snapshot.has_usage || !HasUsage(usage))
     {
@@ -140,6 +143,11 @@ void MetricsCollector::ApplyCost(const agent::core::ChatUsage& usage)
 const MetricsSnapshot& MetricsCollector::Snapshot() const
 {
     return m_snapshot;
+}
+
+std::string MetricsCollector::CurrentSessionLine() const
+{
+    return FormatMetricsLine(m_snapshot);
 }
 
 } // namespace agent::plugins::metrics

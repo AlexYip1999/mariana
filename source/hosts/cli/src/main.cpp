@@ -5,6 +5,9 @@
 #include <vector>
 
 #include "agent/core/chat_model.h"
+#include "agent/core/composite_tracer.h"
+#include "agent/core/stats_view.h"
+#include "agent/core/tracer.h"
 #include "agent/core/version.h"
 #include "agent/hosts/cli/cli_app.h"
 #include "agent/hosts/cli/cli_config.h"
@@ -13,6 +16,7 @@
 #include "agent/hosts/cli/platform_transport.h"
 #include "agent/model/openai_chat_model.h"
 #include "agent/plugins/metrics/metrics_collector.h"
+#include "agent/runtime/service_registry.h"
 #include "agent/transport/http_transport.h"
 
 namespace
@@ -25,10 +29,11 @@ void PrintUsage()
               << "用法:\n"
               << "  agent-cli --version\n"
               << "  agent-cli --help\n"
-              << "  agent-cli --init-config [--config <path>]\n"
+              << "  agent-cli --init-config [--interactive] [--config <path>]\n"
               << "  agent-cli --interactive [--stats] [--config <path>]\n"
               << "  agent-cli [--stats] [--config <path>] <question...>\n"
               << "\n"
+              << "--init-config 写入默认配置；与 --interactive 组合时先写配置再进入交互。\n"
               << "--interactive 进入终端聊天模式（输入 /help 查看命令，/stats 查看统计）。\n"
               << "--stats 在交互模式下每轮自动打印 token/速度/缓存/上下文/预计费用；单轮模式打印一次。\n"
               << "\n"
@@ -60,17 +65,22 @@ int main(int argc, char** argv)
     }
 
     const agent::hosts::cli::CliOptions& options = parsed.options;
-    switch (options.mode)
+
+    if (options.mode == agent::hosts::cli::CliMode::Help)
     {
-    case agent::hosts::cli::CliMode::Help:
         PrintUsage();
         return 0;
-    case agent::hosts::cli::CliMode::Version:
+    }
+    if (options.mode == agent::hosts::cli::CliMode::Version)
+    {
         std::cout << agent::core::Version() << "\n";
         return 0;
-    case agent::hosts::cli::CliMode::InitConfig:
+    }
+
+    std::string config_path = options.config_path;
+    if (options.init_config)
     {
-        const std::string target = options.config_path.empty() ? "config.local.json" : options.config_path;
+        const std::string target = config_path.empty() ? "config.local.json" : config_path;
         const agent::hosts::cli::ConfigInitResult result = agent::hosts::cli::WriteDefaultCliConfigFile(target);
         if (!result.ok)
         {
@@ -78,17 +88,18 @@ int main(int argc, char** argv)
             return 2;
         }
         std::cout << "created " << result.path << "\n";
-        return 0;
-    }
-    case agent::hosts::cli::CliMode::Interactive:
-    case agent::hosts::cli::CliMode::Chat:
-        break;
+        config_path = result.path;
+
+        if (options.mode == agent::hosts::cli::CliMode::InitConfig)
+        {
+            return 0;
+        }
     }
 
     agent::hosts::cli::CliConfig config;
-    if (!options.config_path.empty())
+    if (!config_path.empty())
     {
-        const agent::hosts::cli::ConfigLoadResult loaded = agent::hosts::cli::LoadCliConfigFile(options.config_path);
+        const agent::hosts::cli::ConfigLoadResult loaded = agent::hosts::cli::LoadCliConfigFile(config_path);
         if (!loaded.ok)
         {
             std::cerr << "config error: " << loaded.error << "\n";
@@ -136,19 +147,31 @@ int main(int argc, char** argv)
     model_config.model = config.model;
     model_config.api_key = api_key;
     model_config.timeout_ms = config.timeout_ms;
+
     agent::model::OpenAiChatModel model(*transport, model_config);
-    const agent::plugins::metrics::CostEstimator cost_estimator =
-        config.cost_currency == "USD" ? agent::plugins::metrics::CostEstimator::DeepSeekUsdDefaults()
-                                      : agent::plugins::metrics::CostEstimator::DeepSeekCnyDefaults();
-    agent::plugins::metrics::MetricsCollector metrics(config.provider, 1000000, cost_estimator);
+
     const bool interactive = options.mode == agent::hosts::cli::CliMode::Interactive;
-    agent::plugins::metrics::MetricsCollector* metrics_ptr = (interactive || options.stats) ? &metrics : nullptr;
+    const bool observability_enabled = interactive || options.stats;
+
+    agent::runtime::ServiceRegistry services;
+    if (observability_enabled)
+    {
+        const agent::plugins::metrics::CostEstimator cost_estimator =
+            config.cost_currency == "USD" ? agent::plugins::metrics::CostEstimator::DeepSeekUsdDefaults()
+                                          : agent::plugins::metrics::CostEstimator::DeepSeekCnyDefaults();
+        const auto metrics =
+            std::make_shared<agent::plugins::metrics::MetricsCollector>(config.provider, 1000000, cost_estimator);
+        const auto tracer = std::make_shared<agent::core::CompositeTracer>();
+        tracer->Add(metrics);
+        services.Set<agent::core::Tracer>(tracer);
+        services.Set<agent::core::StatsView>(metrics);
+    }
 
     if (interactive)
     {
-        return agent::hosts::cli::RunInteractive(model, config, std::cin, std::cout, std::cerr, metrics_ptr,
+        return agent::hosts::cli::RunInteractive(model, config, std::cin, std::cout, std::cerr, services,
                                                  options.stats);
     }
 
-    return agent::hosts::cli::RunCli(options.question, model, config, std::cout, std::cerr, metrics_ptr);
+    return agent::hosts::cli::RunCli(options.question, model, config, std::cout, std::cerr, services);
 }
