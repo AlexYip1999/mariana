@@ -79,6 +79,7 @@ DeepSeek 相关：
 ## 当前状态
 
 - A2 CLI：参数解析、配置分层、单轮/交互、`tool_names` 白名单、`--workspace`/`--no-tools`、`--stats` 已完成；
+- 组合根抽为 `RunHost(args, HostEnvironment&, in/out/err)`：`HostEnvironment` 注入 env、当前目录、transport；`main` 只做控制台/参数 OS 适配；
 - 组合根构造 `AgentRunner`，通过 `AgentExecutor&` 注入 `RunCli`/`RunInteractive`；
 - 工具链路有 FakeHttpTransport 的端到端测试（tool_calls → read_file → role=tool → final）；
 - **Windows 已接入临时 `WinHttpTransport`**，可以直接真实调用（需要可用网络和 API key）；

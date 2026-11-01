@@ -2,6 +2,7 @@ add_library(agent_cli_lib
     src/cli_app.cpp
     src/cli_config.cpp
     src/cli_options.cpp
+    src/host_runner.cpp
     src/interactive_app.cpp
     src/platform_transport.cpp
 )
@@ -18,6 +19,8 @@ target_link_libraries(agent_cli_lib
         agent_transport
         agent_runtime
     PRIVATE
+        agent_metrics
+        agent_tools
         agent_third_party
 )
 

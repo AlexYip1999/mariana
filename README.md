@@ -14,7 +14,7 @@
 | `source/integrations/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
 | `source/integrations/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 integrations |
 | `source/runtime/` | 通用 Agent 运行时：`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`（默认 ReAct）、`ToolRegistry`、`ServiceRegistry` |
-| `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（workspace 沙箱、敏感文件拒绝、UTF-8 校验、大小限制） |
+| `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（WorkspacePathPolicy、句柄级复核、敏感文件拒绝、UTF-8 校验、大小限制） |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
 | `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮/交互式、`--stats`、`--workspace`、`--no-tools`） |
 | `tests/` | 单元测试（doctest） |

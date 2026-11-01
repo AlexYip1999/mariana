@@ -5,6 +5,7 @@
 #include <string>
 
 #include "agent/core/tool.h"
+#include "agent/plugins/tools/workspace_path_policy.h"
 
 namespace agent::plugins::tools
 {
@@ -23,7 +24,7 @@ class ReadFileTool : public core::Tool
   private:
     core::ToolResult ExecuteRead(const std::string& relative_path) const;
 
-    std::filesystem::path m_workspace_root;
+    WorkspacePathPolicy m_policy;
     std::uintmax_t m_max_read_bytes = 256 * 1024;
 };
 

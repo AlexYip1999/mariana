@@ -1,5 +1,6 @@
 add_library(agent_tools
     src/read_file_tool.cpp
+    src/workspace_path_policy.cpp
 )
 
 target_include_directories(agent_tools

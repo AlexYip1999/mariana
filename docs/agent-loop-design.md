@@ -306,6 +306,7 @@ class AgentRunner : public AgentExecutor
 - 第一版工具只读；
 - `read_file` 只允许 workspace 相对路径，拒绝绝对路径和 `..` 越界；
 - 拒绝 symlink/junction 逃逸和敏感文件（`.env`、`config.local.json`、`.git`、私钥等）；
+- Windows 打开后基于句柄最终路径二次复核，降低 TOCTOU 风险；
 - 单文件读取上限（例如 256KB），工具输出有每轮总预算；
 - 工具执行不能阻塞过久；
 - 写操作、命令执行必须等到审批机制和沙箱设计完成后再加。

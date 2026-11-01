@@ -209,5 +209,6 @@ TEST_CASE("rejects directories and oversized files")
 
     const agent::core::ToolResult missing = tool.Execute(R"({"path":"missing.txt"})");
     CHECK_FALSE(missing.ok);
-    CHECK(missing.error.find("cannot inspect file") != std::string::npos);
+    CHECK((missing.error.find("file not found") != std::string::npos ||
+           missing.error.find("cannot inspect file") != std::string::npos));
 }
