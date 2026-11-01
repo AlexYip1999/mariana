@@ -23,16 +23,13 @@
 
 ## 使用
 
-```powershell
-# 单轮 + 统计
-.\build\vs2022\bin\Debug\agent-cli.exe --stats "hello"
-
-# 交互模式：采集始终开启
-# --stats 每轮自动打印；/stats 随时查看当前会话
-.\build\vs2022\bin\Debug\agent-cli.exe --stats --interactive
+```text
+/stats              当前会话统计
+/stats auto on|off  每轮自动打印
+/stats today|all    聚合 trace usage
 ```
 
-单轮模式的 `--stats` 输出到 `stderr`；交互模式的 `/stats` 输出到 `stdout`。
+当前会话统计输出到 `stdout`；自动 `stats` 与错误一起输出到 `stderr`。CLI 现在统一走交互 app。
 
 ## 费用估算说明
 

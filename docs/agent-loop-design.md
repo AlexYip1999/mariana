@@ -9,7 +9,7 @@
 A1 已经完成：
 
 - CLI 单轮问答；
-- `--interactive` 多轮终端聊天；
+- 交互式终端聊天（唯一 CLI 入口）；
 - 配置分层（`resources/config.json` + `config.local.json`）；
 - OpenAI 兼容的 `OpenAiChatModel` + 临时 `WinHttpTransport`。
 
@@ -576,7 +576,7 @@ services.Set<SystemRegistry>(systems);
 - `AgentExecutor` 接口 + `Tool` / `ToolRegistry` / `AgentRunner`（ReAct 默认实现）/ `AgentProfile` / `Tracer`；
 - `read_file` 工具；
 - FakeChatModel 离线测试；
-- CLI 默认走 `AgentRunner`；提供 `--no-tools` / `--workspace` / `tool_names`。
+- CLI 默认走 `AgentRunner`；`/tools` / `/workspace` / `tool_names` 在交互命令/配置中设置。
 
 ### A2.2 真机与可观测
 
@@ -587,8 +587,8 @@ services.Set<SystemRegistry>(systems);
 
 ### A2.3 演进预留
 
+- trace usage 聚合与 viewer（已实现 `/stats today|all` / `/trace`）；
 - 异步 Step 驱动接口（不实现）；
-- Conversation 序列化；
 - Router/Worker 需要的 session_id / 事件订阅字段。
 
 ## 11. 未来演进映射
@@ -691,30 +691,35 @@ struct PluginManifest
 
 ### 12.4 ServiceRegistry
 
-放在 agent/runtime 层，不放进 core。
-
-当前实现（静态插件/内置服务）：
+放在 agent/runtime 层，不放进 core。registry 是组合作用域，不是全局单例：
 
 ```cpp
 class ServiceRegistry
 {
   public:
+    explicit ServiceRegistry(const ServiceRegistry* parent = nullptr);
+
     template <typename T>
     void Set(std::shared_ptr<T> service);
 
     template <typename T>
-    std::shared_ptr<T> Get() const;
+    std::shared_ptr<T> Get() const; // local -> parent
 
-    /// 存在则返回，不存在则调用 factory 创建并注册。
     template <typename T>
     std::shared_ptr<T> CreateOrGet(const std::function<std::shared_ptr<T>()>& factory);
+
+    const ServiceRegistry* Parent() const;
 };
 ```
 
 用途：
 
-- 内置插件/静态插件按接口类型注册和查找；
-- `CreateOrGet` 用于可选服务（tracer、world、logger）的懒创建；
+- Host scope：transport、model、metrics、trace、CommandRegistry、HostContext；
+- Agent scope：tools、policies、context providers、executor；
+- `Get` 先查 Agent 本地，再 fallback 到 Host；
+- `Set` 只写当前 scope；
+- parent 生命周期必须长于 child；
+- `CreateOrGet` 用于可选服务的懒创建；
 - 动态插件以后增加 service_id 重载，避免跨 DLL RTTI/ABI 问题；
 - 必需服务（model、tools、executor）仍优先显式注入。
 
@@ -728,51 +733,75 @@ class ServiceRegistry
 
 不要在工具/插件内部到处 `GetComponent`，否则依赖关系会变成隐式的，测试和初始化顺序都会变难。
 
-### 12.6 AgentRuntime 作为组合根（草案，未实现）
+### 12.6 Agent 与 AgentServices
 
-> 当前等价物是 `AgentSession` + 组合根（CLI `main.cpp`）；`AgentRuntime`/`AgentServices` 是后续面向多 Agent 的收口方案。
+当前实现：
 
 ```cpp
 struct AgentServices
 {
-    AgentProfile profile;
-    std::shared_ptr<ChatModel> model;
-    std::shared_ptr<ToolRegistry> tools;
-    std::vector<std::shared_ptr<ContextProvider>> contexts;
-    std::shared_ptr<Tracer> tracer;
+    std::shared_ptr<ServiceRegistry> services;
     std::shared_ptr<AgentExecutor> executor;
-    ServiceRegistry* services = nullptr;
 };
 
-class AgentRuntime
+struct AgentId
+{
+    std::string value;
+};
+
+struct AgentDescriptor
+{
+    AgentId id;
+    std::string name;
+    std::string version;
+    AgentProfile profile;
+    std::vector<std::string> capabilities;
+};
+
+class Agent
 {
   public:
-    AgentRuntime(std::string agent_id, AgentServices services);
+    Agent(AgentDescriptor descriptor, AgentServices services);
 
-    AgentRunResult RunTurn(const std::string& user_input);
-    const Conversation& ConversationState() const;
+    AgentRunResult Send(const std::string& input);
+    void ClearHistory();
+
+    AgentSession& Session();
+    const core::Conversation& History() const;
+
+    const AgentDescriptor& Descriptor() const;
+    const AgentProfile& Profile() const;
+    const AgentServices& Services() const;
+
+    void SetProfile(AgentProfile profile);
 
   private:
-    std::string m_agent_id;
+    AgentDescriptor m_descriptor;
     AgentServices m_services;
-    Conversation m_conversation;
+    AgentSession m_session;
 };
 ```
 
-- 通用层不绑定 NPC/UE/CLI；
-- 一 NPC 一 Agent 只是宿主的一种组装方式；
-- 多 Agent 编排（Router/Orchestrator）不放进 AgentRuntime。
+- Host 创建 Host scope registry；
+- 每个 Agent 创建自己的 child `ServiceRegistry`；
+- Agent 持有自己的 `AgentServices`（Agent scope registry + executor）；
+- `AgentDescriptor` 保存身份/版本/能力快照；
+- `AgentSession` 只负责会话状态；
+- `AgentRunner` 只负责一次 Turn 的执行策略；
+- 一 NPC 一 Agent 是宿主组装方式；
+- 多 Agent 编排（Router/Orchestrator）不放进 Agent；
+- `AgentRuntime` 仍是未来多 Agent 的收口方案，不在当前实现。
 
 ### 12.7 双层循环
 
 外层循环（交互方式）与内层执行策略已经分层：
 
 ```text
-外层：host 循环（RunCli / RunInteractive）
-  决定“什么时候 Send、循环多少次、输入从哪来、输出到哪”
+外层：host 循环（RunInteractive）
+  启动参数只保留 --help/--version/--config
     ↓
-中层：AgentSession::Send(turn)
-  维护 Conversation 和 AgentProfile
+中层：Agent::Send(turn)
+  Agent 持有身份/配置 + Conversation + Executor
     ↓
 内层：AgentExecutor::RunTurn
   决定“一次 Turn 里，模型↔工具循环怎么跑”
@@ -780,14 +809,14 @@ class AgentRuntime
 
 当前实现：
 
-- `RunCli` / `RunInteractive` 直接调用 `AgentSession::Send`；
+- Host 组装 `AgentDescriptor` + `Agent`，`RunInteractive` 直接调用 `Agent::Send`；
 - `AgentSession` 构造时注入 `AgentExecutor&`，不依赖具体 `AgentRunner`；
 - `AgentExecutor` 是接口，`AgentRunner` 是默认 ReAct 实现；
 - 没有 `SessionDriver` 抽象：它没有实现/调用/测试，已移除，等第二个宿主或 CLI 命令抽象落地后再设计。
 
 组件化约束：
 
-- `AgentSession` 只持有 `AgentProfile` + `AgentExecutor&` + `Conversation`；
+- `Agent` 持有 `AgentDescriptor` + `AgentSession`；`AgentSession` 只持有 `AgentProfile` + `AgentExecutor&` + `Conversation`；
 - model/tools/systems 由组合根构造 Executor 时注入，不进入 Session；
 - 可选服务通过 `ServiceRegistry` 在组合根解析，再注入 Executor；
 - turn 级事件由 `AgentSystem::OnTurnStart/OnTurnEnd` 发出，step/tool 事件由 Executor 发出；
@@ -828,7 +857,7 @@ class AgentRuntime
 5. `AgentProfile` 是否包含 model/temperature，还是复用 adapter 配置；
 6. `ContextProvider` 的位置与数据类型（JSON 字符串 vs 强类型结构）；
 7. trace 文件格式与落盘位置；
-8. CLI `--agent` 与 `--interactive` 的关系（新增模式 vs interactive 默认走 Agent）；
+8. 启动参数与交互命令的边界（启动只保留 bootstrap，其他用命令）。
 9. Flow DSL 从什么时候开始设计（建议 A3 之后）；
 10. ServiceRegistry 放 `source/agent` 还是独立 `source/plugins/runtime`；
 11. 服务 ID 用字符串/GUID/`std::type_index`，动态插件如何保持 ABI 稳定；

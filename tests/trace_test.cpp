@@ -4,12 +4,15 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "agent/plugins/traces/file_tracer.h"
+#include "agent/plugins/traces/trace_usage.h"
+#include "agent/plugins/traces/trace_viewer.h"
 
 TEST_CASE("file tracer writes redacted jsonl events")
 {
@@ -66,6 +69,22 @@ TEST_CASE("file tracer writes redacted jsonl events")
     CHECK(events[2]["content"].get<std::string>().find("[REDACTED]") != std::string::npos);
     CHECK(events[4]["content"].get<std::string>().find("[REDACTED]") != std::string::npos);
     CHECK(events[2]["usage"]["total_tokens"] == 12);
+
+    const agent::plugins::traces::UsageSummary summary = agent::plugins::traces::ScanTraceUsage(directory, "all");
+    CHECK(summary.sessions == 1);
+    CHECK(summary.turns == 1);
+    CHECK(summary.model_calls == 1);
+    CHECK(summary.total_tokens == 12);
+    CHECK(agent::plugins::traces::FormatUsageSummary(summary, "all").find("usage (all)") != std::string::npos);
+
+    std::ostringstream rendered;
+    std::string render_error;
+    const bool rendered_ok = agent::plugins::traces::RenderTraceFile(tracer.Path(), rendered, render_error);
+    INFO("render error: " << render_error);
+    CHECK(rendered_ok);
+    CHECK(render_error.empty());
+    CHECK(rendered.str().find("Turn 1") != std::string::npos);
+    CHECK(rendered.str().find("model_response") != std::string::npos);
 
     file.close();
     tracer.Close();

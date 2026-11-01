@@ -18,6 +18,7 @@ struct CliConfig
     std::string system_prompt = "You are a concise assistant.";
     int timeout_ms = 30000;
     int max_tokens = 1024;
+    int max_steps = 8;
     double temperature = 0.0;
     std::size_t max_context_chars = 120000;
     std::vector<std::string> tool_names = {"read_file"};

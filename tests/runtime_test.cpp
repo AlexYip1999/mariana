@@ -9,6 +9,7 @@
 
 #include "agent/core/chat_model.h"
 #include "agent/core/tracer.h"
+#include "agent/runtime/agent.h"
 #include "agent/runtime/agent_runner.h"
 #include "agent/runtime/agent_session.h"
 #include "agent/runtime/service_registry.h"
@@ -45,6 +46,15 @@ agent::runtime::AgentSessionConfig MakeConfig()
     config.temperature = 0.1;
     config.max_tokens = 64;
     return config;
+}
+
+agent::runtime::ServiceRegistry MakeServices()
+{
+    agent::runtime::ServiceRegistry services;
+    services.Set<agent::runtime::ToolPolicy>(std::make_shared<agent::runtime::AllowAllToolPolicy>());
+    services.Set<agent::runtime::ContextPolicy>(std::make_shared<agent::runtime::KeepRecentTurnsPolicy>());
+    services.Set<agent::runtime::ToolOutputPolicy>(std::make_shared<agent::runtime::TruncateToolOutputPolicy>());
+    return services;
 }
 
 class FakeTracer : public agent::core::NullTracer
@@ -101,6 +111,16 @@ class ThrowingSystem : public agent::core::AgentSystem
     }
 };
 
+class DenyAllToolPolicy : public agent::runtime::ToolPolicy
+{
+  public:
+    bool Allow(const agent::core::ToolCall&, std::string& reason) const override
+    {
+        reason = "denied by test";
+        return false;
+    }
+};
+
 class FakeTool : public agent::core::Tool
 {
   public:
@@ -140,13 +160,56 @@ class FakeTool : public agent::core::Tool
 
 } // namespace
 
+TEST_CASE("agent facade owns descriptor and session")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "hello";
+
+    auto services = std::make_shared<agent::runtime::ServiceRegistry>();
+    services->Set<agent::runtime::ToolPolicy>(std::make_shared<agent::runtime::AllowAllToolPolicy>());
+    services->Set<agent::runtime::ContextPolicy>(std::make_shared<agent::runtime::KeepRecentTurnsPolicy>());
+    services->Set<agent::runtime::ToolOutputPolicy>(std::make_shared<agent::runtime::TruncateToolOutputPolicy>());
+    auto executor = std::make_shared<agent::runtime::AgentRunner>(model, *services);
+
+    agent::runtime::AgentDescriptor descriptor;
+    descriptor.id.value = "npc-1";
+    descriptor.name = "merchant";
+    descriptor.version = "1";
+    descriptor.profile = MakeConfig();
+    descriptor.capabilities = {"trade"};
+
+    agent::runtime::AgentServices agent_services;
+    agent_services.services = services;
+    agent_services.executor = executor;
+    agent::runtime::Agent agent(descriptor, agent_services);
+    CHECK(agent.Id().value == "npc-1");
+    CHECK(agent.Descriptor().name == "merchant");
+    CHECK(agent.Profile().system_prompt == "be brief");
+    CHECK(agent.Services().services == services);
+
+    const agent::runtime::AgentRunResult result = agent.Send("hi");
+    CHECK(result.ok);
+    CHECK(agent.History().messages.size() == 3);
+
+    agent::runtime::AgentProfile profile = agent.Profile();
+    profile.tool_names = {"read_file"};
+    agent.SetProfile(std::move(profile));
+    CHECK(agent.Profile().tool_names == std::vector<std::string>{"read_file"});
+    CHECK(agent.Descriptor().profile.tool_names == std::vector<std::string>{"read_file"});
+
+    agent.ClearHistory();
+    CHECK(agent.History().messages.size() == 1);
+}
+
 TEST_CASE("session keeps conversation and system prompt")
 {
     FakeChatModel model;
     model.response.ok = true;
     model.response.content = "hello";
 
-    agent::runtime::AgentRunner executor(model, nullptr);
+    auto services = MakeServices();
+    agent::runtime::AgentRunner executor(model, services);
     agent::runtime::AgentSession session(MakeConfig(), executor);
 
     const agent::runtime::AgentRunResult first = session.Send("hi");
@@ -177,7 +240,8 @@ TEST_CASE("session keeps failed turn messages")
     model.response.ok = false;
     model.response.error = "boom";
 
-    agent::runtime::AgentRunner executor(model, nullptr);
+    auto services = MakeServices();
+    agent::runtime::AgentRunner executor(model, services);
     agent::runtime::AgentSession session(MakeConfig(), executor);
     const agent::runtime::AgentRunResult result = session.Send("hi");
 
@@ -197,10 +261,12 @@ TEST_CASE("session emits turn start through tracer")
     model.response.content = "hello";
 
     const auto tracer = std::make_shared<FakeTracer>();
-    agent::core::SystemRegistry systems;
-    systems.Add(tracer);
+    auto systems = std::make_shared<agent::core::SystemRegistry>();
+    systems->Add(tracer);
 
-    agent::runtime::AgentRunner executor(model, nullptr, &systems);
+    auto services = MakeServices();
+    services.Set<agent::core::SystemRegistry>(systems);
+    agent::runtime::AgentRunner executor(model, services);
     agent::runtime::AgentSession session(MakeConfig(), executor);
 
     const agent::runtime::AgentRunResult result = session.Send("hi");
@@ -224,15 +290,19 @@ TEST_CASE("agent runner executes tool calls until final answer")
     final_response.content = "done";
     model.responses = {tool_response, final_response};
 
-    agent::runtime::ToolRegistry tools;
+    auto tools = std::make_shared<agent::runtime::ToolRegistry>();
     const auto echo = std::make_shared<FakeTool>("echo");
     std::string error;
-    REQUIRE(tools.Register(echo, error));
+    REQUIRE(tools->Register(echo, error));
 
     const auto tracer = std::make_shared<FakeTracer>();
-    agent::core::SystemRegistry systems;
-    systems.Add(tracer);
-    agent::runtime::AgentRunner runner(model, &tools, &systems);
+    auto systems = std::make_shared<agent::core::SystemRegistry>();
+    systems->Add(tracer);
+
+    auto services = MakeServices();
+    services.Set<agent::runtime::ToolRegistry>(tools);
+    services.Set<agent::core::SystemRegistry>(systems);
+    agent::runtime::AgentRunner runner(model, services);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 4;
     profile.tool_names = {"echo"};
@@ -266,8 +336,8 @@ TEST_CASE("agent runner rejects truncated response")
     model.response.content = "partial";
     model.response.finish_reason = "length";
 
-    agent::runtime::ToolRegistry tools;
-    agent::runtime::AgentRunner runner(model, &tools);
+    auto services = MakeServices();
+    agent::runtime::AgentRunner runner(model, services);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 2;
 
@@ -286,8 +356,8 @@ TEST_CASE("agent runner rejects empty response without appending assistant")
     model.response.ok = true;
     model.response.content = "";
 
-    agent::runtime::ToolRegistry tools;
-    agent::runtime::AgentRunner runner(model, &tools);
+    auto services = MakeServices();
+    agent::runtime::AgentRunner runner(model, services);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 2;
 
@@ -298,6 +368,42 @@ TEST_CASE("agent runner rejects empty response without appending assistant")
     CHECK(result.error.find("empty response") != std::string::npos);
     REQUIRE(conversation.messages.size() == 1);
     CHECK(conversation.messages[0].role == agent::core::ChatRole::User);
+}
+
+TEST_CASE("agent runner asks tool policy before execution")
+{
+    FakeChatModel model;
+    agent::core::ChatResponse tool_response;
+    tool_response.ok = true;
+    agent::core::ToolCall call;
+    call.id = "call_1";
+    call.name = "echo";
+    tool_response.tool_calls.push_back(call);
+    agent::core::ChatResponse final_response;
+    final_response.ok = true;
+    final_response.content = "recovered";
+    model.responses = {tool_response, final_response};
+
+    auto tools = std::make_shared<agent::runtime::ToolRegistry>();
+    const auto echo = std::make_shared<FakeTool>("echo");
+    std::string error;
+    REQUIRE(tools->Register(echo, error));
+
+    auto services = MakeServices();
+    services.Set<agent::runtime::ToolRegistry>(tools);
+    services.Set<agent::runtime::ToolPolicy>(std::make_shared<DenyAllToolPolicy>());
+    agent::runtime::AgentRunner runner(model, services);
+    agent::runtime::AgentProfile profile;
+    profile.max_steps = 3;
+    profile.tool_names = {"echo"};
+
+    agent::core::Conversation conversation;
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "use echo");
+
+    CHECK(result.ok);
+    CHECK(echo->m_calls == 0);
+    REQUIRE(conversation.messages.size() == 4);
+    CHECK(conversation.messages[2].content.find("denied by policy") != std::string::npos);
 }
 
 TEST_CASE("agent runner limits tool output per turn")
@@ -314,13 +420,15 @@ TEST_CASE("agent runner limits tool output per turn")
     final_response.content = "done";
     model.responses = {tool_response, final_response};
 
-    agent::runtime::ToolRegistry tools;
+    auto tools = std::make_shared<agent::runtime::ToolRegistry>();
     const auto echo = std::make_shared<FakeTool>("echo");
     echo->m_result_content = std::string(100000, 'x');
     std::string error;
-    REQUIRE(tools.Register(echo, error));
+    REQUIRE(tools->Register(echo, error));
 
-    agent::runtime::AgentRunner runner(model, &tools);
+    auto services = MakeServices();
+    services.Set<agent::runtime::ToolRegistry>(tools);
+    agent::runtime::AgentRunner runner(model, services);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 3;
     profile.tool_names = {"echo"};
@@ -342,9 +450,11 @@ TEST_CASE("agent runner converts hook exceptions to errors")
     model.response.content = "hello";
 
     const auto throwing = std::make_shared<ThrowingSystem>();
-    agent::core::SystemRegistry systems;
-    systems.Add(throwing);
-    agent::runtime::AgentRunner runner(model, nullptr, &systems);
+    auto systems = std::make_shared<agent::core::SystemRegistry>();
+    systems->Add(throwing);
+    auto services = MakeServices();
+    services.Set<agent::core::SystemRegistry>(systems);
+    agent::runtime::AgentRunner runner(model, services);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 2;
 
@@ -362,7 +472,8 @@ TEST_CASE("agent runner trims old conversation to context budget")
     model.response.ok = true;
     model.response.content = "done";
 
-    agent::runtime::AgentRunner runner(model, nullptr);
+    auto services = MakeServices();
+    agent::runtime::AgentRunner runner(model, services);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 1;
     profile.max_context_chars = 2500;
@@ -397,12 +508,14 @@ TEST_CASE("agent runner stops at max steps and keeps messages")
     tool_response.tool_calls.push_back(call);
     model.responses = {tool_response, tool_response};
 
-    agent::runtime::ToolRegistry tools;
+    auto tools = std::make_shared<agent::runtime::ToolRegistry>();
     const auto echo = std::make_shared<FakeTool>("echo");
     std::string error;
-    REQUIRE(tools.Register(echo, error));
+    REQUIRE(tools->Register(echo, error));
 
-    agent::runtime::AgentRunner runner(model, &tools);
+    auto services = MakeServices();
+    services.Set<agent::runtime::ToolRegistry>(tools);
+    agent::runtime::AgentRunner runner(model, services);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 2;
     profile.tool_names = {"echo"};
@@ -431,8 +544,8 @@ TEST_CASE("agent runner feeds unknown tool errors back to model")
     final_response.content = "recovered";
     model.responses = {tool_response, final_response};
 
-    agent::runtime::ToolRegistry tools;
-    agent::runtime::AgentRunner runner(model, &tools);
+    auto services = MakeServices();
+    agent::runtime::AgentRunner runner(model, services);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 3;
 
@@ -463,14 +576,16 @@ TEST_CASE("agent session uses tool registry when present")
     final_response.content = "done";
     model.responses = {tool_response, final_response};
 
-    agent::runtime::ToolRegistry tools;
+    auto tools = std::make_shared<agent::runtime::ToolRegistry>();
     const auto echo = std::make_shared<FakeTool>("echo");
     std::string error;
-    REQUIRE(tools.Register(echo, error));
+    REQUIRE(tools->Register(echo, error));
 
     agent::runtime::AgentSessionConfig config = MakeConfig();
     config.tool_names = {"echo"};
-    agent::runtime::AgentRunner executor(model, &tools);
+    auto services = MakeServices();
+    services.Set<agent::runtime::ToolRegistry>(tools);
+    agent::runtime::AgentRunner executor(model, services);
     agent::runtime::AgentSession session(config, executor);
 
     const agent::runtime::AgentRunResult result = session.Send("use echo");
@@ -501,6 +616,22 @@ TEST_CASE("component registry creates once and caches")
     CHECK(*first == 42);
     CHECK(created == 1);
     CHECK(registry.Get<double>() == nullptr);
+}
+
+TEST_CASE("service registry falls back to parent scope")
+{
+    agent::runtime::ServiceRegistry parent;
+    const auto parent_policy = std::make_shared<agent::runtime::AllowAllToolPolicy>();
+    parent.Set<agent::runtime::ToolPolicy>(parent_policy);
+
+    agent::runtime::ServiceRegistry child(&parent);
+    CHECK(child.Parent() == &parent);
+    CHECK(child.Get<agent::runtime::ToolPolicy>() == parent_policy);
+
+    const auto child_policy = std::make_shared<agent::runtime::AllowAllToolPolicy>();
+    child.Set<agent::runtime::ToolPolicy>(child_policy);
+    CHECK(child.Get<agent::runtime::ToolPolicy>() == child_policy);
+    CHECK(parent.Get<agent::runtime::ToolPolicy>() == parent_policy);
 }
 
 TEST_CASE("tool registry registers by name and executes")

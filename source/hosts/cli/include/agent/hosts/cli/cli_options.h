@@ -1,32 +1,18 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
 namespace agent::hosts::cli
 {
 
-enum class CliMode
-{
-    Chat,
-    Interactive,
-    InitConfig,
-    Version,
-    Help,
-};
-
+/// 最小启动参数：其余选项都通过交互命令设置。
 struct CliOptions
 {
-    bool init_config = false;
-    bool stats = false;
-    bool no_tools = false;
-    bool trust_workspace_config = false;
-    bool trace = false;
-    CliMode mode = CliMode::Chat;
+    bool help = false;
+    bool version = false;
     std::string config_path;
-    std::string workspace_root;
-    std::string trace_dir = "traces";
-    std::vector<std::string> question;
 };
 
 struct CliParseResult

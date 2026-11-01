@@ -9,10 +9,10 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "agent/core/system_registry.h"
-#include "agent/hosts/cli/cli_app.h"
 #include "agent/hosts/cli/cli_config.h"
 #include "agent/hosts/cli/interactive_app.h"
 #include "agent/model/openai_chat_model.h"
@@ -100,9 +100,7 @@ class TestExecutor
 {
   public:
     TestExecutor(agent::core::ChatModel& model, agent::runtime::ServiceRegistry& services)
-        : m_tools(services.Get<agent::runtime::ToolRegistry>())
-        , m_systems(services.Get<agent::core::SystemRegistry>())
-        , m_executor(model, m_tools.get(), m_systems.get())
+        : m_executor(model, services)
     {}
 
     agent::runtime::AgentExecutor& Get()
@@ -111,10 +109,50 @@ class TestExecutor
     }
 
   private:
-    std::shared_ptr<agent::runtime::ToolRegistry> m_tools;
-    std::shared_ptr<agent::core::SystemRegistry> m_systems;
     agent::runtime::AgentRunner m_executor;
 };
+
+void AddInteractiveCommands(agent::runtime::ServiceRegistry& services, const agent::hosts::cli::CliConfig& config)
+{
+    auto context = std::make_shared<agent::hosts::cli::CliContext>();
+    context->config = config;
+    context->stats = services.Get<agent::core::StatsView>();
+    services.Set<agent::hosts::cli::CliContext>(context);
+
+    auto commands = std::make_shared<agent::hosts::cli::CommandRegistry>();
+    agent::hosts::cli::RegisterDefaultCommands(*commands);
+    services.Set<agent::hosts::cli::CommandRegistry>(commands);
+}
+
+agent::runtime::Agent MakeAgent(const agent::hosts::cli::CliConfig& config, agent::runtime::AgentExecutor& executor,
+                                agent::runtime::ServiceRegistry& services)
+{
+    agent::runtime::AgentProfile profile;
+    profile.model = config.model;
+    profile.system_prompt = config.system_prompt;
+    profile.temperature = config.temperature;
+    profile.max_tokens = config.max_tokens;
+    profile.max_steps = config.max_steps;
+    profile.max_context_chars = config.max_context_chars;
+    profile.tool_names = config.tool_names;
+
+    agent::runtime::AgentDescriptor descriptor;
+    descriptor.id.value = "cli";
+    descriptor.name = "agent-cli";
+    descriptor.version = "test";
+    descriptor.profile = profile;
+
+    agent::runtime::AgentServices agent_services;
+    agent_services.services = std::shared_ptr<agent::runtime::ServiceRegistry>(&services,
+                                                                               [](agent::runtime::ServiceRegistry*)
+                                                                               {
+                                                                               });
+    agent_services.executor = std::shared_ptr<agent::runtime::AgentExecutor>(&executor,
+                                                                             [](agent::runtime::AgentExecutor*)
+                                                                             {
+                                                                             });
+    return agent::runtime::Agent(std::move(descriptor), agent_services);
+}
 
 } // namespace
 
@@ -349,11 +387,14 @@ TEST_CASE("runs a single question and prints content")
         });
 
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
+    std::istringstream input("hello\n/exit\n");
     std::ostringstream out;
     std::ostringstream err;
     agent::runtime::ServiceRegistry services;
+    AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
-    const int exit_code = agent::hosts::cli::RunCli({"hello"}, executor.Get(), MakeCliConfig(), out, err, services);
+    auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
+    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, out, err, services);
 
     CHECK(exit_code == 0);
     CHECK(out.str().find("hello") != std::string::npos);
@@ -412,6 +453,7 @@ TEST_CASE("runs a tool call end to end through cli")
         });
 
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
+    std::istringstream input("read README\n/exit\n");
     std::ostringstream out;
     std::ostringstream err;
     agent::runtime::ServiceRegistry services;
@@ -420,9 +462,10 @@ TEST_CASE("runs a tool call end to end through cli")
     REQUIRE(tools->Register(std::make_shared<agent::plugins::tools::ReadFileTool>(workspace), tool_error));
     services.Set<agent::runtime::ToolRegistry>(tools);
 
+    AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
-    const int exit_code =
-        agent::hosts::cli::RunCli({"read README"}, executor.Get(), MakeCliConfig(), out, err, services);
+    auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
+    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, out, err, services);
 
     CHECK(exit_code == 0);
     CHECK(out.str().find("done") != std::string::npos);
@@ -454,29 +497,17 @@ TEST_CASE("reports model errors")
         });
 
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
+    std::istringstream input("hello\n/exit\n");
     std::ostringstream out;
     std::ostringstream err;
     agent::runtime::ServiceRegistry services;
+    AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
-    const int exit_code = agent::hosts::cli::RunCli({"hello"}, executor.Get(), MakeCliConfig(), out, err, services);
+    auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
+    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, out, err, services);
 
-    CHECK(exit_code == 1);
+    CHECK(exit_code == 0);
     CHECK(err.str().find("timeout") != std::string::npos);
-}
-
-TEST_CASE("rejects empty question")
-{
-    agent::tests::FakeHttpTransport transport;
-    agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
-    std::ostringstream out;
-    std::ostringstream err;
-    agent::runtime::ServiceRegistry services;
-    TestExecutor executor(adapter, services);
-    const int exit_code = agent::hosts::cli::RunCli({}, executor.Get(), MakeCliConfig(), out, err, services);
-
-    CHECK(exit_code == 2);
-    CHECK(err.str().find("usage") != std::string::npos);
-    CHECK(transport.RequestCount() == 0);
 }
 
 TEST_CASE("interactive chat keeps history and handles commands")
@@ -491,8 +522,10 @@ TEST_CASE("interactive chat keeps history and handles commands")
     std::ostringstream output;
     std::ostringstream error;
     agent::runtime::ServiceRegistry services;
+    AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
-    const int exit_code = agent::hosts::cli::RunInteractive(executor.Get(), config, input, output, error, services);
+    auto agent = MakeAgent(config, executor.Get(), services);
+    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, output, error, services);
 
     CHECK(exit_code == 0);
     CHECK(adapter.requests.size() == 3);
@@ -513,11 +546,13 @@ TEST_CASE("interactive chat keeps history and handles commands")
     CHECK(output.str().find("history cleared") != std::string::npos);
 }
 
-TEST_CASE("one-shot reports stats when enabled")
+TEST_CASE("interactive trims whitespace before commands")
 {
     FakeChatModel adapter;
-    adapter.replies = {"hello"};
+    agent::hosts::cli::CliConfig config;
+    config.system_prompt = "be brief";
 
+    std::istringstream input("  /stats\n/exit\n");
     std::ostringstream output;
     std::ostringstream error;
     const auto metrics = std::make_shared<agent::plugins::metrics::MetricsCollector>();
@@ -527,14 +562,12 @@ TEST_CASE("one-shot reports stats when enabled")
     services.Set<agent::core::SystemRegistry>(systems);
     services.Set<agent::core::StatsView>(metrics);
 
+    AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
-    const int exit_code = agent::hosts::cli::RunCli({"hi"}, executor.Get(), MakeCliConfig(), output, error, services);
-
-    CHECK(exit_code == 0);
-    CHECK(output.str().find("hello") != std::string::npos);
-    CHECK(error.str().find("[stats]") != std::string::npos);
-    CHECK(metrics->Snapshot().turns == 1);
-    CHECK(metrics->Snapshot().steps == 1);
+    auto agent = MakeAgent(config, executor.Get(), services);
+    CHECK(agent::hosts::cli::RunInteractive(agent, input, output, error, services) == 0);
+    CHECK(output.str().find("[stats]") != std::string::npos);
+    CHECK(adapter.requests.empty());
 }
 
 TEST_CASE("interactive reports metrics when enabled")
@@ -554,9 +587,10 @@ TEST_CASE("interactive reports metrics when enabled")
     systems->Add(metrics);
     services.Set<agent::core::SystemRegistry>(systems);
     services.Set<agent::core::StatsView>(metrics);
+    AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
-    const int exit_code =
-        agent::hosts::cli::RunInteractive(executor.Get(), config, input, output, error, services, true);
+    auto agent = MakeAgent(config, executor.Get(), services);
+    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, output, error, services, true);
 
     CHECK(exit_code == 0);
     CHECK(metrics->Snapshot().turns == 1);
@@ -581,9 +615,10 @@ TEST_CASE("interactive stats command reports current session")
     systems->Add(metrics);
     services.Set<agent::core::SystemRegistry>(systems);
     services.Set<agent::core::StatsView>(metrics);
+    AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
-    const int exit_code =
-        agent::hosts::cli::RunInteractive(executor.Get(), config, input, output, error, services, false);
+    auto agent = MakeAgent(config, executor.Get(), services);
+    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, output, error, services, false);
 
     CHECK(exit_code == 0);
     CHECK(metrics->Snapshot().turns == 1);

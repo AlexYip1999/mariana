@@ -17,6 +17,7 @@ class ToolRegistry
 {
   public:
     bool Register(std::shared_ptr<core::Tool> tool, std::string& error);
+    void Clear();
 
     core::Tool* Find(const std::string& name) const;
     bool Has(const std::string& name) const;

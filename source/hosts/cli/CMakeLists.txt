@@ -1,5 +1,5 @@
 add_library(agent_cli_lib
-    src/cli_app.cpp
+    src/cli_commands.cpp
     src/cli_config.cpp
     src/cli_options.cpp
     src/host_runner.cpp

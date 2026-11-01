@@ -2,7 +2,7 @@
 
 跨平台、宿主无关的 Agent 核心。同一份 core 计划支撑 CLI、UE 编辑器/运行时、服务端等宿主；UE 接入只是宿主适配阶段（阶段 B），不是起点。
 
-**当前状态：A2（Agent Loop + 工具链路）** —— Windows 已接入临时 WinHTTP 传输；已实现 AgentExecutor/AgentRunner、ToolRegistry、ReAct 工具循环、read_file、metrics、CLI 单轮/交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI。
+**当前状态：A2（Agent Loop + 工具链路）** —— Windows 已接入临时 WinHTTP 传输；已实现 AgentExecutor/AgentRunner、ToolRegistry、ReAct 工具循环、read_file、metrics、CLI 交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI。
 
 ## 目录
 
@@ -13,11 +13,11 @@
 | `source/integrations/` | 外部集成：模型、传输、存储等平台/协议实现 |
 | `source/integrations/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
 | `source/integrations/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 integrations |
-| `source/runtime/` | 通用 Agent 运行时：`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`（默认 ReAct）、`ToolRegistry`、`ServiceRegistry` |
+| `source/runtime/` | 通用 Agent 运行时：`Agent`（身份 + 配置 + 会话 + AgentServices）、scoped `ServiceRegistry`、`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`、`ToolRegistry`、`ToolPolicy`/`ContextPolicy`/`ToolOutputPolicy` |
 | `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（WorkspacePathPolicy、句柄级复核、敏感文件拒绝、UTF-8 校验、大小限制） |
-| `source/plugins/traces/` | JSONL trace 插件：turn/model/tool/usage 事件，内容截断与 key 脱敏 |
+| `source/plugins/traces/` | JSONL trace 插件：默认开启，记录 turn/model/tool/usage，内容截断与 key 脱敏；usage 聚合与 trace viewer |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
-| `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮/交互式、`--stats`、`--workspace`、`--no-tools`） |
+| `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，交互式；启动仅 `--help/--version/--config`，其他用命令） |
 | `tests/` | 单元测试（doctest） |
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
 | `third_party/` | 单头依赖（nlohmann/json、doctest） |
@@ -84,7 +84,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 - 内置默认值兜底；`--config <path>` 显式指定时只加载该文件；
 - `tool_names` 为空数组表示禁用工具；非空名字必须存在于 ToolRegistry（CLI 当前只注册 `read_file`）；
 - `max_context_chars` 控制发送给模型的 conversation 字符预算（0 = 不裁剪，默认 120000）；
-- `--trace` / `--trace-dir <path>` 把事件写入 JSONL trace。
+- trace 插件默认开启；`/trace` 查看当前 trace，`/trace show <file>` 查看指定 trace；
+- `/stats today|all` 聚合 trace usage；
 
 ## 设计文档
 

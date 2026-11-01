@@ -1,5 +1,8 @@
 add_library(agent_traces
     src/file_tracer.cpp
+    src/trace_sink.cpp
+    src/trace_usage.cpp
+    src/trace_viewer.cpp
 )
 
 target_include_directories(agent_traces

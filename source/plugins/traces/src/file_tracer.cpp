@@ -4,6 +4,7 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <string>
@@ -19,11 +20,11 @@ namespace
 
 constexpr std::size_t MAX_TRACE_TEXT = 2000;
 
-std::string ElapsedMillis(std::chrono::steady_clock::time_point start)
+long long ElapsedMillis(std::chrono::steady_clock::time_point start)
 {
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-    return std::to_string(elapsed.count());
+    return elapsed.count();
 }
 
 std::string DefaultSessionId()
@@ -77,26 +78,22 @@ std::string ToolCallsSummary(const std::vector<core::ToolCall>& calls)
 FileTracer::FileTracer(std::filesystem::path trace_dir, std::string session_id)
     : m_session_id(session_id.empty() ? DefaultSessionId() : std::move(session_id))
 {
-    std::error_code error;
-    std::filesystem::create_directories(trace_dir, error);
-    if (!error)
-    {
-        m_path = trace_dir / (m_session_id + ".jsonl");
-        m_file.open(m_path, std::ios::out | std::ios::app | std::ios::binary);
-    }
+    m_path = trace_dir / (m_session_id + ".jsonl");
+    m_sink = std::make_shared<JsonlFileSink>(m_path);
 }
+
+FileTracer::FileTracer(std::shared_ptr<TraceSink> sink)
+    : m_sink(std::move(sink))
+{}
 
 FileTracer::~FileTracer()
 {
-    if (m_file.is_open())
-    {
-        m_file.flush();
-    }
+    Close();
 }
 
 bool FileTracer::IsOpen() const
 {
-    return m_file.is_open();
+    return m_sink != nullptr && m_sink->IsOpen();
 }
 
 const std::filesystem::path& FileTracer::Path() const
@@ -111,10 +108,9 @@ const std::string& FileTracer::SessionId() const
 
 void FileTracer::Close()
 {
-    if (m_file.is_open())
+    if (m_sink != nullptr)
     {
-        m_file.flush();
-        m_file.close();
+        m_sink->Close();
     }
 }
 
@@ -136,6 +132,7 @@ void FileTracer::OnModelRequest(const core::ChatRequest& request)
 {
     ++m_step;
     m_request_started = std::chrono::steady_clock::now();
+    m_model = request.model;
 
     std::string last_content;
     std::string last_role;
@@ -166,6 +163,7 @@ void FileTracer::OnModelResponse(const core::ChatResponse& response)
     event["event"] = "model_response";
     event["turn"] = m_turn;
     event["step"] = m_step;
+    event["model"] = m_model;
     event["ok"] = response.ok;
     event["finish_reason"] = response.finish_reason;
     event["content"] = Sanitize(response.content);
@@ -223,12 +221,10 @@ void FileTracer::OnTurnEnd(bool ok, const std::string& error, int steps)
 
 void FileTracer::WriteEvent(const std::string& json_line)
 {
-    if (!m_file.is_open())
+    if (m_sink != nullptr)
     {
-        return;
+        m_sink->Write(json_line);
     }
-    m_file << json_line << "\n";
-    m_file.flush();
 }
 
 std::string FileTracer::Timestamp() const

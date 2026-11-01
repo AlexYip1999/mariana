@@ -35,6 +35,16 @@ const core::Conversation& AgentSession::History() const
     return m_conversation;
 }
 
+const AgentProfile& AgentSession::Profile() const
+{
+    return m_profile;
+}
+
+void AgentSession::SetProfile(AgentProfile profile)
+{
+    m_profile = std::move(profile);
+}
+
 void AgentSession::AppendSystemPrompt()
 {
     if (!m_profile.system_prompt.empty())

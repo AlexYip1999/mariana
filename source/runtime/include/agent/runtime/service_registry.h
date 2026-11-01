@@ -10,10 +10,14 @@ namespace agent::runtime
 {
 
 /// 按接口类型存放的服务/插件实例注册表。
-/// 用于可选服务与动态插件；必需依赖仍建议显式注入。
+/// registry 是一个组合作用域；parent 用于 fallback 到宿主级共享服务。
 class ServiceRegistry
 {
   public:
+    explicit ServiceRegistry(const ServiceRegistry* parent = nullptr)
+        : m_parent(parent)
+    {}
+
     template <typename T> void Set(std::shared_ptr<T> service)
     {
         m_services[std::type_index(typeid(T))] = std::move(service);
@@ -22,11 +26,11 @@ class ServiceRegistry
     template <typename T> std::shared_ptr<T> Get() const
     {
         const auto it = m_services.find(std::type_index(typeid(T)));
-        if (it == m_services.end())
+        if (it != m_services.end())
         {
-            return nullptr;
+            return std::static_pointer_cast<T>(it->second);
         }
-        return std::static_pointer_cast<T>(it->second);
+        return m_parent != nullptr ? m_parent->Get<T>() : nullptr;
     }
 
     /// 存在则返回，不存在则调用 factory 创建、注册并返回。
@@ -46,7 +50,13 @@ class ServiceRegistry
         return created;
     }
 
+    const ServiceRegistry* Parent() const
+    {
+        return m_parent;
+    }
+
   private:
+    const ServiceRegistry* m_parent = nullptr;
     std::unordered_map<std::type_index, std::shared_ptr<void>> m_services;
 };
 

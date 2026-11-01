@@ -1,6 +1,9 @@
 add_library(agent_runtime
+    src/agent.cpp
     src/agent_runner.cpp
     src/agent_session.cpp
+    src/context_policy.cpp
+    src/tool_output_policy.cpp
     src/tool_registry.cpp
 )
 

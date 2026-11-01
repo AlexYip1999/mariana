@@ -23,6 +23,10 @@ class AgentSession
     void ClearHistory();
 
     const core::Conversation& History() const;
+    const AgentProfile& Profile() const;
+
+    /// 切换 profile（例如 /tools、/workspace 后更新工具白名单）。
+    void SetProfile(AgentProfile profile);
 
   private:
     void AppendSystemPrompt();

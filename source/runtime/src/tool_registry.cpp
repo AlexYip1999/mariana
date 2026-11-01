@@ -31,6 +31,12 @@ bool ToolRegistry::Register(std::shared_ptr<core::Tool> tool, std::string& error
     return true;
 }
 
+void ToolRegistry::Clear()
+{
+    m_tools.clear();
+    m_tools_by_name.clear();
+}
+
 core::Tool* ToolRegistry::Find(const std::string& name) const
 {
     const auto it = m_tools_by_name.find(name);

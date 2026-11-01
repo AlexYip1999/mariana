@@ -5,7 +5,6 @@
 #include <string>
 
 #include "agent/core/stats_view.h"
-#include "agent/runtime/agent_session.h"
 
 namespace agent::hosts::cli
 {
@@ -13,26 +12,15 @@ namespace agent::hosts::cli
 namespace
 {
 
-void PrintHelp(std::ostream& out)
+std::string Trim(const std::string& text)
 {
-    out << "commands:\n"
-        << "  /clear  clear conversation history\n"
-        << "  /stats  show current session statistics\n"
-        << "  /exit   exit\n"
-        << "  /quit   exit\n"
-        << "  /help   show this help\n";
-}
-
-runtime::AgentSessionConfig MakeSessionConfig(const CliConfig& config)
-{
-    runtime::AgentSessionConfig session_config;
-    session_config.model = config.model;
-    session_config.system_prompt = config.system_prompt;
-    session_config.temperature = config.temperature;
-    session_config.max_tokens = config.max_tokens;
-    session_config.max_context_chars = config.max_context_chars;
-    session_config.tool_names = config.tool_names;
-    return session_config;
+    const std::size_t first = text.find_first_not_of(" \t");
+    if (first == std::string::npos)
+    {
+        return {};
+    }
+    const std::size_t last = text.find_last_not_of(" \t");
+    return text.substr(first, last - first + 1);
 }
 
 void PrintStats(const core::StatsView* stats, std::ostream& err)
@@ -43,26 +31,24 @@ void PrintStats(const core::StatsView* stats, std::ostream& err)
     }
 }
 
-void PrintStatsCommand(const core::StatsView* stats, std::ostream& out)
-{
-    if (stats != nullptr)
-    {
-        out << stats->CurrentSessionLine() << "\n";
-    }
-    else
-    {
-        out << "stats unavailable\n";
-    }
-}
-
 } // namespace
 
-int RunInteractive(runtime::AgentExecutor& executor, const CliConfig& config, std::istream& in, std::ostream& out,
-                   std::ostream& err, runtime::ServiceRegistry& services, bool auto_print_stats)
+int RunInteractive(runtime::Agent& agent, std::istream& in, std::ostream& out, std::ostream& err,
+                   runtime::ServiceRegistry& services, bool auto_print_stats)
 {
     const std::shared_ptr<core::StatsView> stats = services.Get<core::StatsView>();
+    const std::shared_ptr<CommandRegistry> commands = services.Get<CommandRegistry>();
+    const std::shared_ptr<CliContext> context = services.Get<CliContext>();
+    if (!commands || !context)
+    {
+        err << "interactive commands unavailable: CommandRegistry/CliContext not registered\n";
+        return 2;
+    }
 
-    runtime::AgentSession session(MakeSessionConfig(config), executor);
+    const auto auto_stats_enabled = [&]()
+    {
+        return auto_print_stats || context->auto_stats;
+    };
 
     std::string line;
     while (true)
@@ -74,36 +60,31 @@ int RunInteractive(runtime::AgentExecutor& executor, const CliConfig& config, st
             break;
         }
 
-        if (line == "/exit" || line == "/quit")
-        {
-            break;
-        }
-        if (line == "/clear")
-        {
-            session.ClearHistory();
-            out << "history cleared\n";
-            continue;
-        }
-        if (line == "/help")
-        {
-            PrintHelp(out);
-            continue;
-        }
-        if (line == "/stats")
-        {
-            PrintStatsCommand(stats.get(), out);
-            continue;
-        }
-        if (line.empty())
+        const std::string command_line = Trim(line);
+        if (command_line.empty())
         {
             continue;
         }
 
-        const runtime::AgentRunResult result = session.Send(line);
+        if (command_line.rfind("/", 0) == 0)
+        {
+            const CommandResult result = commands->Execute(command_line, *context, agent, out, err);
+            if (result == CommandResult::Exit)
+            {
+                break;
+            }
+            if (result == CommandResult::NotFound)
+            {
+                out << "unknown command: " << command_line << "\n";
+            }
+            continue;
+        }
+
+        const runtime::AgentRunResult result = agent.Send(command_line);
         if (!result.ok)
         {
             err << "error: " << result.error << "\n";
-            if (auto_print_stats)
+            if (auto_stats_enabled())
             {
                 PrintStats(stats.get(), err);
             }
@@ -111,7 +92,7 @@ int RunInteractive(runtime::AgentExecutor& executor, const CliConfig& config, st
         }
 
         out << result.content << "\n";
-        if (auto_print_stats)
+        if (auto_stats_enabled())
         {
             PrintStats(stats.get(), err);
         }

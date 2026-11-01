@@ -83,42 +83,47 @@ agent::hosts::cli::HostEnvironment MakeEnvironment(std::map<std::string, std::st
     return environment;
 }
 
+int RunWithInput(const std::vector<std::string>& args, const agent::hosts::cli::HostEnvironment& environment,
+                 const std::string& input_text, std::ostringstream& out, std::ostringstream& err)
+{
+    std::istringstream input(input_text);
+    return agent::hosts::cli::RunHost(args, environment, input, out, err);
+}
+
 } // namespace
 
 TEST_CASE("host runner prints help and version")
 {
     const auto environment = MakeEnvironment({});
-    std::istringstream input;
     std::ostringstream out;
     std::ostringstream err;
 
-    CHECK(agent::hosts::cli::RunHost({"--help"}, environment, input, out, err) == 0);
+    CHECK(RunWithInput({"--help"}, environment, "", out, err) == 0);
     CHECK(out.str().find("agent-cli") != std::string::npos);
 
     out.str("");
     err.str("");
-    CHECK(agent::hosts::cli::RunHost({"--version"}, environment, input, out, err) == 0);
+    CHECK(RunWithInput({"--version"}, environment, "", out, err) == 0);
     CHECK_FALSE(out.str().empty());
     CHECK(err.str().empty());
 }
 
-TEST_CASE("host runner init config is idempotent")
+TEST_CASE("host runner config init command is idempotent")
 {
     const std::filesystem::path workspace = MakeTempWorkspace();
     {
         ScopedWorkingDirectory scoped(workspace);
-        const auto environment = MakeEnvironment({});
-        std::istringstream input;
+        const auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
         std::ostringstream out;
         std::ostringstream err;
 
-        CHECK(agent::hosts::cli::RunHost({"--init-config"}, environment, input, out, err) == 0);
+        CHECK(RunWithInput({}, environment, "/config init\n/exit\n", out, err) == 0);
         CHECK(std::filesystem::exists(workspace / "config.local.json"));
 
         out.str("");
         err.str("");
-        CHECK(agent::hosts::cli::RunHost({"--init-config"}, environment, input, out, err) == 0);
-        CHECK(out.str().find("already exists") != std::string::npos);
+        CHECK(RunWithInput({}, environment, "/config init\n/exit\n", out, err) == 0);
+        CHECK(err.str().find("already exists") != std::string::npos);
     }
     std::filesystem::remove_all(workspace);
 }
@@ -129,74 +134,88 @@ TEST_CASE("host runner reports missing api key")
     {
         ScopedWorkingDirectory scoped(workspace);
         const auto environment = MakeEnvironment({});
-        std::istringstream input;
         std::ostringstream out;
         std::ostringstream err;
 
-        CHECK(agent::hosts::cli::RunHost({"hi"}, environment, input, out, err) == 2);
+        CHECK(RunWithInput({}, environment, "", out, err) == 2);
         CHECK(err.str().find("missing API key") != std::string::npos);
     }
     std::filesystem::remove_all(workspace);
 }
 
-TEST_CASE("host runner rejects invalid workspace")
+TEST_CASE("host runner reports invalid workspace command")
 {
     const std::filesystem::path workspace = MakeTempWorkspace();
     {
         ScopedWorkingDirectory scoped(workspace);
-        auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
-        std::istringstream input;
+        const auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
         std::ostringstream out;
         std::ostringstream err;
 
-        const std::vector<std::string> args = {"--workspace", "definitely-missing", "hi"};
-        CHECK(agent::hosts::cli::RunHost(args, environment, input, out, err) == 2);
+        CHECK(RunWithInput({}, environment, "/workspace definitely-missing\n/exit\n", out, err) == 0);
         CHECK(err.str().find("invalid workspace") != std::string::npos);
     }
     std::filesystem::remove_all(workspace);
 }
 
-TEST_CASE("host runner chats without tools")
+TEST_CASE("host runner can disable tools from command")
 {
     const std::filesystem::path workspace = MakeTempWorkspace();
     {
         ScopedWorkingDirectory scoped(workspace);
         const auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
-        std::istringstream input;
         std::ostringstream out;
         std::ostringstream err;
 
-        CHECK(agent::hosts::cli::RunHost({"--no-tools", "hi"}, environment, input, out, err) == 0);
+        CHECK(RunWithInput({}, environment, "/tools off\nhi\n/exit\n", out, err) == 0);
+        CHECK(out.str().find("tools: off") != std::string::npos);
         CHECK(out.str().find("ok") != std::string::npos);
-        CHECK(err.str().empty());
     }
     std::filesystem::remove_all(workspace);
 }
 
-TEST_CASE("host runner writes trace events")
+TEST_CASE("host runner trace defaults on and shows current trace")
 {
     const std::filesystem::path workspace = MakeTempWorkspace();
     {
         ScopedWorkingDirectory scoped(workspace);
         const auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
-        std::istringstream input;
         std::ostringstream out;
         std::ostringstream err;
-        const std::filesystem::path trace_dir = workspace / "traces";
-        const std::vector<std::string> args = {"--trace-dir", trace_dir.string(), "--no-tools", "hi"};
 
-        CHECK(agent::hosts::cli::RunHost(args, environment, input, out, err) == 0);
+        CHECK(RunWithInput({}, environment, "hi\n/trace\n/exit\n", out, err) == 0);
+        CHECK(out.str().find("Turn 1") != std::string::npos);
+        CHECK(out.str().find("model_response") != std::string::npos);
+    }
+    std::filesystem::remove_all(workspace);
+}
 
-        std::filesystem::path trace_file;
-        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(trace_dir))
+TEST_CASE("host runner shows trace and aggregates usage from commands")
+{
+    const std::filesystem::path workspace = MakeTempWorkspace();
+    {
+        ScopedWorkingDirectory scoped(workspace);
+        std::filesystem::create_directories(workspace / "traces");
+        const std::filesystem::path trace_file = workspace / "traces" / "demo.jsonl";
         {
-            if (entry.path().extension() == ".jsonl")
-            {
-                trace_file = entry.path();
-            }
+            std::ofstream file(trace_file);
+            file << R"({"ts":"2026-11-01T10:00:00Z","event":"turn_start","turn":1})" << "\n";
+            file
+                << R"({"ts":"2026-11-01T10:00:01Z","event":"model_response","turn":1,"step":1,"ok":true,"usage":{"prompt_tokens":3,"completion_tokens":7,"total_tokens":10}})"
+                << "\n";
+            file << R"({"ts":"2026-11-01T10:00:02Z","event":"turn_end","turn":1,"ok":true,"steps":1,"duration_ms":10})"
+                 << "\n";
         }
-        REQUIRE_FALSE(trace_file.empty());
-        CHECK(std::filesystem::file_size(trace_file) > 0);
+
+        const auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
+        std::ostringstream out;
+        std::ostringstream err;
+        const std::string input_text = "/trace show " + trace_file.string() + "\n/stats all\n/exit\n";
+
+        CHECK(RunWithInput({}, environment, input_text, out, err) == 0);
+        CHECK(out.str().find("Turn 1") != std::string::npos);
+        CHECK(out.str().find("model_response") != std::string::npos);
+        CHECK(out.str().find("total_tokens=10") != std::string::npos);
     }
     std::filesystem::remove_all(workspace);
 }
@@ -212,12 +231,12 @@ TEST_CASE("host runner rejects unknown tool names at startup")
             file << R"({"tool_names":["missing_tool"]})";
         }
 
-        auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
-        std::istringstream input;
+        const auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
         std::ostringstream out;
         std::ostringstream err;
+        const std::vector<std::string> args = {"--config", config_path.string()};
 
-        CHECK(agent::hosts::cli::RunHost({"--config", config_path.string(), "hi"}, environment, input, out, err) == 2);
+        CHECK(RunWithInput(args, environment, "", out, err) == 2);
         CHECK(err.str().find("unknown tool") != std::string::npos);
     }
     std::filesystem::remove_all(workspace);

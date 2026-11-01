@@ -6,4 +6,4 @@
 - `model/`：模型集成。`ChatModel` 接口在 core，`OpenAiChatModel` 已实现（OpenAI 兼容 / DeepSeek）
 - `storage/`：内存 / JSON / SQLite 存储（待建）
 
-A1 当前进度：`transport`（WinHTTP 临时）+ `model` + CLI 单轮问答 + 离线单测已完成，下一步真实联调与 A2 工具循环。
+A1 当前进度：`transport`（WinHTTP 临时）+ `model` + CLI 交互/离线单测已完成，下一步真实联调与 A2 工具循环。

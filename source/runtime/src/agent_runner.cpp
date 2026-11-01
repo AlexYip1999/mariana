@@ -100,103 +100,29 @@ bool IsToolAllowed(const AgentProfile& profile, const std::string& name)
     return std::find(profile.tool_names.begin(), profile.tool_names.end(), name) != profile.tool_names.end();
 }
 
-constexpr std::size_t MAX_TOOL_OUTPUT_BYTES = 32 * 1024;
-
-std::string LimitToolOutput(std::string content, std::size_t& used_bytes)
-{
-    if (used_bytes >= MAX_TOOL_OUTPUT_BYTES)
-    {
-        return "[truncated: tool output budget exhausted]";
-    }
-
-    const std::size_t remaining = MAX_TOOL_OUTPUT_BYTES - used_bytes;
-    if (content.size() > remaining)
-    {
-        content.resize(remaining);
-        content += "\n[truncated]";
-        used_bytes = MAX_TOOL_OUTPUT_BYTES;
-        return content;
-    }
-
-    used_bytes += content.size();
-    return content;
-}
-
-std::size_t EstimateMessageChars(const core::ChatMessage& message)
-{
-    std::size_t total = message.content.size() + message.tool_call_id.size();
-    for (const core::ToolCall& call : message.tool_calls)
-    {
-        total += call.id.size() + call.name.size() + call.arguments_json.size();
-    }
-    return total;
-}
-
-std::size_t EstimateMessagesChars(const std::vector<core::ChatMessage>& messages, std::size_t start)
-{
-    std::size_t total = 0;
-    for (std::size_t index = start; index < messages.size(); ++index)
-    {
-        total += EstimateMessageChars(messages[index]);
-    }
-    return total;
-}
-
-std::vector<core::ChatMessage> BuildTrimmedMessages(const std::vector<core::ChatMessage>& messages,
-                                                    std::size_t system_end, std::size_t start)
-{
-    std::vector<core::ChatMessage> trimmed;
-    trimmed.reserve(system_end + messages.size() - start);
-    trimmed.insert(trimmed.end(), messages.begin(), messages.begin() + static_cast<std::ptrdiff_t>(system_end));
-    trimmed.insert(trimmed.end(), messages.begin() + static_cast<std::ptrdiff_t>(start), messages.end());
-    return trimmed;
-}
-
-std::vector<core::ChatMessage> TrimMessages(const std::vector<core::ChatMessage>& messages, std::size_t max_chars)
-{
-    if (max_chars == 0 || EstimateMessagesChars(messages, 0) <= max_chars)
-    {
-        return messages;
-    }
-
-    std::size_t system_end = 0;
-    while (system_end < messages.size() && messages[system_end].role == core::ChatRole::System)
-    {
-        ++system_end;
-    }
-
-    const std::size_t system_chars = EstimateMessagesChars(messages, 0) - EstimateMessagesChars(messages, system_end);
-    for (std::size_t start = system_end; start < messages.size(); ++start)
-    {
-        if (messages[start].role != core::ChatRole::User)
-        {
-            continue;
-        }
-        if (system_chars + EstimateMessagesChars(messages, start) <= max_chars)
-        {
-            return BuildTrimmedMessages(messages, system_end, start);
-        }
-    }
-
-    // 兜底：即使超预算，也保留 system + 最近一个 User 及其后续消息，避免无 user 请求。
-    for (std::size_t index = messages.size(); index > system_end; --index)
-    {
-        if (messages[index - 1].role == core::ChatRole::User)
-        {
-            return BuildTrimmedMessages(messages, system_end, index - 1);
-        }
-    }
-
-    return messages;
-}
-
 } // namespace
 
-AgentRunner::AgentRunner(core::ChatModel& model, ToolRegistry* tools, core::SystemRegistry* systems)
+AgentRunner::AgentRunner(core::ChatModel& model, ServiceRegistry& services)
     : m_model(model)
-    , m_tools(tools)
-    , m_systems(systems)
-{}
+    , m_tools(services.Get<ToolRegistry>())
+    , m_systems(services.Get<core::SystemRegistry>())
+    , m_tool_policy(services.Get<ToolPolicy>())
+    , m_context_policy(services.Get<ContextPolicy>())
+    , m_tool_output_policy(services.Get<ToolOutputPolicy>())
+{
+    if (!m_tool_policy)
+    {
+        m_tool_policy = std::make_shared<AllowAllToolPolicy>();
+    }
+    if (!m_context_policy)
+    {
+        m_context_policy = std::make_shared<KeepRecentTurnsPolicy>();
+    }
+    if (!m_tool_output_policy)
+    {
+        m_tool_output_policy = std::make_shared<TruncateToolOutputPolicy>();
+    }
+}
 
 AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversation& conversation,
                                     const std::string& user_input)
@@ -230,7 +156,7 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
             }
         }
 
-        NotifyTurnStart(m_systems);
+        NotifyTurnStart(m_systems.get());
         turn_started = true;
 
         if (!profile.system_prompt.empty() && !HasSystemMessage(conversation))
@@ -243,7 +169,7 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
         const std::vector<core::ToolSpec> tool_specs =
             m_tools != nullptr ? m_tools->SpecsFor(profile.tool_names) : std::vector<core::ToolSpec>{};
 
-        std::size_t tool_output_bytes = 0;
+        ToolOutputBudget output_budget;
 
         for (int step = 0; step < profile.max_steps; ++step)
         {
@@ -252,9 +178,9 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
             request.temperature = profile.temperature;
             request.max_tokens = profile.max_tokens;
             request.tools = tool_specs;
-            request.messages = TrimMessages(conversation.messages, profile.max_context_chars);
+            request.messages = m_context_policy->Prepare(conversation.messages, profile.max_context_chars);
 
-            NotifyModelRequest(m_systems, request);
+            NotifyModelRequest(m_systems.get(), request);
 
             core::ChatResponse response;
             try
@@ -265,24 +191,24 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
             {
                 result.error = std::string("model call failed: ") + error.what();
                 result.steps = step + 1;
-                NotifyTurnEnd(m_systems, false, result.error, result.steps);
+                NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
                 return result;
             }
             catch (...)
             {
                 result.error = "model call failed";
                 result.steps = step + 1;
-                NotifyTurnEnd(m_systems, false, result.error, result.steps);
+                NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
                 return result;
             }
 
-            NotifyModelResponse(m_systems, response);
+            NotifyModelResponse(m_systems.get(), response);
 
             if (!response.ok)
             {
                 result.error = response.error;
                 result.steps = step + 1;
-                NotifyTurnEnd(m_systems, false, result.error, result.steps);
+                NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
                 return result;
             }
 
@@ -291,7 +217,7 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
             {
                 result.error = "model response incomplete: " + response.finish_reason;
                 result.steps = step + 1;
-                NotifyTurnEnd(m_systems, false, result.error, result.steps);
+                NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
                 return result;
             }
 
@@ -301,7 +227,7 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
                 {
                     result.error = "model returned empty response";
                     result.steps = step + 1;
-                    NotifyTurnEnd(m_systems, false, result.error, result.steps);
+                    NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
                     return result;
                 }
 
@@ -313,7 +239,7 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
                 result.ok = true;
                 result.content = response.content;
                 result.steps = step + 1;
-                NotifyTurnEnd(m_systems, true, {}, result.steps);
+                NotifyTurnEnd(m_systems.get(), true, {}, result.steps);
                 return result;
             }
 
@@ -325,13 +251,19 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
 
             for (const core::ToolCall& call : response.tool_calls)
             {
-                NotifyToolCall(m_systems, call);
+                NotifyToolCall(m_systems.get(), call);
 
                 core::ToolResult tool_result;
+                std::string deny_reason;
                 if (m_tools == nullptr || !IsToolAllowed(profile, call.name))
                 {
                     tool_result.ok = false;
                     tool_result.error = "tool not allowed: " + call.name;
+                }
+                else if (m_tool_policy != nullptr && !m_tool_policy->Allow(call, deny_reason))
+                {
+                    tool_result.ok = false;
+                    tool_result.error = "tool denied by policy: " + deny_reason;
                 }
                 else
                 {
@@ -351,20 +283,20 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
                     }
                 }
 
-                NotifyToolResult(m_systems, call, tool_result);
+                NotifyToolResult(m_systems.get(), call, tool_result);
 
                 const std::string tool_content = tool_result.ok ? tool_result.content : tool_result.error;
                 core::ChatMessage tool_message;
                 tool_message.role = core::ChatRole::Tool;
                 tool_message.tool_call_id = call.id;
-                tool_message.content = LimitToolOutput(tool_content, tool_output_bytes);
+                tool_message.content = m_tool_output_policy->Limit(call, tool_content, output_budget);
                 conversation.Append(std::move(tool_message));
             }
         }
 
         result.error = "max steps exceeded";
         result.steps = profile.max_steps;
-        NotifyTurnEnd(m_systems, false, result.error, result.steps);
+        NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
         return result;
     }
     catch (const std::exception& error)
@@ -374,7 +306,7 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
         result.steps = 0;
         if (turn_started)
         {
-            NotifyTurnEnd(m_systems, false, result.error, result.steps);
+            NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
         }
         return result;
     }
@@ -385,7 +317,7 @@ AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversat
         result.steps = 0;
         if (turn_started)
         {
-            NotifyTurnEnd(m_systems, false, result.error, result.steps);
+            NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
         }
         return result;
     }
