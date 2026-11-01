@@ -16,6 +16,22 @@
 | 客户端 / UE 打包 | key 可被逆向提取 | **不在客户端内置长期 key**；走后端代理 / 网关，客户端只拿短期 token |
 | 进程环境 | 同用户或子进程可见 | 用独立 key、最小权限账号、限额、定期轮换 |
 
+## 工具与信息流安全
+
+- 工具默认只读，`--workspace` 限定可访问根目录，`--no-tools` 完全关闭工具。
+- `read_file` 只接受 workspace 内相对路径；拒绝绝对路径、`..` 越界、symlink/junction 逃逸。
+- 敏感文件拒绝（启发式，不是完整防护）：`.env` / `.env.*`、`config.local.json`、`.git`、`.docker`、`.kube`、`id_rsa` / `id_ed25519` / `id_ecdsa`、`.git-credentials`、`.netrc`、`.npmrc`、`.pypirc`、`.htpasswd`、`*.key` / `*.pem` / `*.pfx` / `*.p12` / `*.jks` / `*.ppk` / `*.kdbx`。
+- 单文件有读取上限，且只接受 UTF-8 文本；二进制/GBK/UTF-16 会返回错误。
+- 工具结果进入模型上下文后视为不可信内容；文件里的“忽略之前指令”等 prompt injection 可能影响模型决策，不能作为授权依据。
+- 不要把 workspace 指向 HOME、仓库根或包含凭据的目录；敏感目录只应通过显式 workspace 白名单开放。
+
+## 配置信任边界
+
+- `endpoint` 必须使用 `https://`，只有 localhost 允许 `http://`。
+- CLI 会自动加载 cwd 的 `config.json` / `config.local.json`；若 cwd 配置修改 `endpoint`、`api_key_env`、`model` 或 `system_prompt`，默认拒绝，必须显式 `--trust-workspace-config`。
+- 不要在不可信仓库中运行 `agent-cli` 并同时持有高价值环境变量；把 key 放在独立进程环境或代理网关。
+- 工具输出和配置文件内容都可能被 prompt injection 利用；授权动作（写文件、执行命令）必须走独立审批，不要只靠模型判断。
+
 ## 为什么不做"自研加密模块"
 
 1. 本地加密的密钥最终必须能被程序拿到；同机/同用户攻击者同样能拿到，属于混淆而非安全。

@@ -2,7 +2,7 @@
 
 跨平台、宿主无关的 Agent 核心。同一份 core 计划支撑 CLI、UE 编辑器/运行时、服务端等宿主；UE 接入只是宿主适配阶段（阶段 B），不是起点。
 
-**当前状态：A0 骨架 + A1（transport / model / CLI）** —— Windows 上已接入临时 WinHTTP 传输，可真实调用模型；跨平台正式实现（libcurl）后置。CTest 覆盖 core + transport + model + cli。
+**当前状态：A2（Agent Loop + 工具链路）** —— Windows 已接入临时 WinHTTP 传输；已实现 AgentExecutor/AgentRunner、ToolRegistry、ReAct 工具循环、read_file、metrics、CLI 单轮/交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI。
 
 ## 目录
 
@@ -13,10 +13,10 @@
 | `source/integrations/` | 外部集成：模型、传输、存储等平台/协议实现 |
 | `source/integrations/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
 | `source/integrations/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 integrations |
-| `source/runtime/` | 通用 Agent 运行时：`AgentSession`、`ToolRegistry`、`ServiceRegistry`、`SessionDriver` 接口 |
-| `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（workspace 沙箱、大小限制） |
+| `source/runtime/` | 通用 Agent 运行时：`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`（默认 ReAct）、`ToolRegistry`、`ServiceRegistry` |
+| `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（workspace 沙箱、敏感文件拒绝、UTF-8 校验、大小限制） |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
-| `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮/交互式、`--stats`） |
+| `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，单轮/交互式、`--stats`、`--workspace`、`--no-tools`） |
 | `tests/` | 单元测试（doctest） |
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
 | `third_party/` | 单头依赖（nlohmann/json、doctest） |
@@ -66,10 +66,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 
 项目级 skill `cpp-code-style` 位于 `.dsh/skills/cpp-code-style/`，DSH 会话会自动加载，提示 agent 按上述流程检查。
 
-## 安全（密钥）
+## 安全（密钥与工具）
 
 - API key 不写进仓库 / 配置文件 / 日志；CLI 只从环境变量 `DEEPSEEK_API_KEY` 读取。
 - 配置文件里的 `api_key` / `key` / `token` 字段会被解析器拒绝。
+- `endpoint` 必须是 `https://`（仅 localhost 允许 http）。
+- 自动加载的 cwd 配置若修改 `endpoint` / `api_key_env`，默认拒绝；需要时显式加 `--trust-workspace-config`。
+- 工具默认只能读 workspace 内的文本文件；拒绝 `.env`、`config.local.json`、`.git`、私钥等敏感文件。
 - 本地持久化请用 OS 凭据库，不要自研加密；UE / 打包客户端不要内置长期 key，走代理网关。
 - 详细威胁模型见 [`docs/security.md`](docs/security.md)。
 
@@ -78,17 +81,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 - `resources/config.json`（提交到仓库）：共享默认值，不含密钥；构建时复制到 exe 同目录；
 - `config.local.json`（gitignore）：本机覆盖，只写需要改的字段，字段级覆盖 shared；
 - 内置默认值兜底；`--config <path>` 显式指定时只加载该文件；
+- `tool_names` 为空数组表示禁用工具；非空名字必须存在于 ToolRegistry（CLI 当前只注册 `read_file`）。
 
 ## 设计文档
 
-- [Agent 循环（A2）设计草案](docs/agent-loop-design.md)
+- [Agent 循环（A2）设计](docs/agent-loop-design.md)
 - [安全与密钥管理](docs/security.md)
 
-## 下一步（对应学习计划 U1）
+## 下一步
 
-- 真实联调：`$env:DEEPSEEK_API_KEY = "..."`，然后 `agent-cli "用一句话介绍 C++20"`（Windows 已用临时 WinHTTP）
-- 跨平台正式实现：把 `WinHttpTransport` 替换为 libcurl（接口不变，UE 宿主仍用 FHttpModule）
-- 之后进入 A2：工具注册表 + Agent 循环
+- 真实 API 联调：`$env:DEEPSEEK_API_KEY = "..."`，然后 `agent-cli "读取 README.md 并总结"`；
+- 补 file tracer / usage 持久化（A2.2）；
+- 跨平台正式实现：把 `WinHttpTransport` 替换为 libcurl（接口不变，UE 宿主仍用 FHttpModule）；
+- 之后进入 A3：ContextProvider、Memory、Eval。
 
 CLI 的配置与用法见 [`source/hosts/cli/README.md`](source/hosts/cli/README.md)，共享默认见 [`resources/config.json`](resources/config.json)。
 

@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,13 +45,6 @@ agent::runtime::AgentSessionConfig MakeConfig()
     config.temperature = 0.1;
     config.max_tokens = 64;
     return config;
-}
-
-agent::runtime::AgentSessionDependencies MakeDependencies(FakeChatModel& model)
-{
-    agent::runtime::AgentSessionDependencies dependencies;
-    dependencies.model = &model;
-    return dependencies;
 }
 
 class FakeTracer : public agent::core::NullTracer
@@ -98,6 +92,15 @@ class FakeTracer : public agent::core::NullTracer
     int m_last_steps = 0;
 };
 
+class ThrowingSystem : public agent::core::AgentSystem
+{
+  public:
+    void OnTurnStart() override
+    {
+        throw std::runtime_error("hook boom");
+    }
+};
+
 class FakeTool : public agent::core::Tool
 {
   public:
@@ -125,13 +128,14 @@ class FakeTool : public agent::core::Tool
         ++m_calls;
         m_last_arguments = arguments_json;
         agent::core::ToolResult result;
-        result.content = "ok";
+        result.content = m_result_content;
         return result;
     }
 
     std::string m_name;
     int m_calls = 0;
     std::string m_last_arguments;
+    std::string m_result_content = "ok";
 };
 
 } // namespace
@@ -142,9 +146,10 @@ TEST_CASE("session keeps conversation and system prompt")
     model.response.ok = true;
     model.response.content = "hello";
 
-    agent::runtime::AgentSession session(MakeConfig(), MakeDependencies(model));
+    agent::runtime::AgentRunner executor(model, nullptr);
+    agent::runtime::AgentSession session(MakeConfig(), executor);
 
-    const agent::runtime::AgentRunResult first = session.RunTurn("hi");
+    const agent::runtime::AgentRunResult first = session.Send("hi");
     CHECK(first.ok);
     CHECK(first.content == "hello");
     CHECK(session.History().messages.size() == 3);
@@ -154,7 +159,7 @@ TEST_CASE("session keeps conversation and system prompt")
     CHECK(model.requests[0].messages[1].role == agent::core::ChatRole::User);
 
     model.response.content = "again";
-    const agent::runtime::AgentRunResult second = session.RunTurn("next");
+    const agent::runtime::AgentRunResult second = session.Send("next");
     CHECK(second.ok);
     CHECK(session.History().messages.size() == 5);
     CHECK(model.requests[1].messages.size() == 4);
@@ -172,8 +177,9 @@ TEST_CASE("session keeps failed turn messages")
     model.response.ok = false;
     model.response.error = "boom";
 
-    agent::runtime::AgentSession session(MakeConfig(), MakeDependencies(model));
-    const agent::runtime::AgentRunResult result = session.RunTurn("hi");
+    agent::runtime::AgentRunner executor(model, nullptr);
+    agent::runtime::AgentSession session(MakeConfig(), executor);
+    const agent::runtime::AgentRunResult result = session.Send("hi");
 
     CHECK_FALSE(result.ok);
     CHECK(result.error == "boom");
@@ -194,11 +200,10 @@ TEST_CASE("session emits turn start through tracer")
     agent::core::SystemRegistry systems;
     systems.Add(tracer);
 
-    agent::runtime::AgentSessionDependencies dependencies = MakeDependencies(model);
-    dependencies.systems = &systems;
-    agent::runtime::AgentSession session(MakeConfig(), dependencies);
+    agent::runtime::AgentRunner executor(model, nullptr, &systems);
+    agent::runtime::AgentSession session(MakeConfig(), executor);
 
-    const agent::runtime::AgentRunResult result = session.RunTurn("hi");
+    const agent::runtime::AgentRunResult result = session.Send("hi");
 
     CHECK(result.ok);
     CHECK(tracer->m_turns == 1);
@@ -227,13 +232,13 @@ TEST_CASE("agent runner executes tool calls until final answer")
     const auto tracer = std::make_shared<FakeTracer>();
     agent::core::SystemRegistry systems;
     systems.Add(tracer);
-    agent::runtime::AgentRunner runner(model, tools, &systems);
+    agent::runtime::AgentRunner runner(model, &tools, &systems);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 4;
     profile.tool_names = {"echo"};
 
     agent::core::Conversation conversation;
-    const agent::runtime::AgentRunResult result = runner.Run(profile, conversation, "use echo");
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "use echo");
 
     CHECK(result.ok);
     CHECK(result.content == "done");
@@ -254,6 +259,103 @@ TEST_CASE("agent runner executes tool calls until final answer")
     CHECK(tracer->m_last_steps == 2);
 }
 
+TEST_CASE("agent runner rejects truncated response")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "partial";
+    model.response.finish_reason = "length";
+
+    agent::runtime::ToolRegistry tools;
+    agent::runtime::AgentRunner runner(model, &tools);
+    agent::runtime::AgentProfile profile;
+    profile.max_steps = 2;
+
+    agent::core::Conversation conversation;
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "hi");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("incomplete") != std::string::npos);
+    REQUIRE(conversation.messages.size() == 1);
+    CHECK(conversation.messages[0].role == agent::core::ChatRole::User);
+}
+
+TEST_CASE("agent runner rejects empty response without appending assistant")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "";
+
+    agent::runtime::ToolRegistry tools;
+    agent::runtime::AgentRunner runner(model, &tools);
+    agent::runtime::AgentProfile profile;
+    profile.max_steps = 2;
+
+    agent::core::Conversation conversation;
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "hi");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("empty response") != std::string::npos);
+    REQUIRE(conversation.messages.size() == 1);
+    CHECK(conversation.messages[0].role == agent::core::ChatRole::User);
+}
+
+TEST_CASE("agent runner limits tool output per turn")
+{
+    FakeChatModel model;
+    agent::core::ChatResponse tool_response;
+    tool_response.ok = true;
+    agent::core::ToolCall call;
+    call.id = "call_1";
+    call.name = "echo";
+    tool_response.tool_calls.push_back(call);
+    agent::core::ChatResponse final_response;
+    final_response.ok = true;
+    final_response.content = "done";
+    model.responses = {tool_response, final_response};
+
+    agent::runtime::ToolRegistry tools;
+    const auto echo = std::make_shared<FakeTool>("echo");
+    echo->m_result_content = std::string(100000, 'x');
+    std::string error;
+    REQUIRE(tools.Register(echo, error));
+
+    agent::runtime::AgentRunner runner(model, &tools);
+    agent::runtime::AgentProfile profile;
+    profile.max_steps = 3;
+    profile.tool_names = {"echo"};
+
+    agent::core::Conversation conversation;
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "read");
+
+    CHECK(result.ok);
+    REQUIRE(conversation.messages.size() == 4);
+    const std::string& tool_content = conversation.messages[2].content;
+    CHECK(tool_content.size() < 40000);
+    CHECK(tool_content.find("[truncated]") != std::string::npos);
+}
+
+TEST_CASE("agent runner converts hook exceptions to errors")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "hello";
+
+    const auto throwing = std::make_shared<ThrowingSystem>();
+    agent::core::SystemRegistry systems;
+    systems.Add(throwing);
+    agent::runtime::AgentRunner runner(model, nullptr, &systems);
+    agent::runtime::AgentProfile profile;
+    profile.max_steps = 2;
+
+    agent::core::Conversation conversation;
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "hi");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("unhandled exception") != std::string::npos);
+    CHECK(conversation.messages.empty());
+}
+
 TEST_CASE("agent runner stops at max steps and keeps messages")
 {
     FakeChatModel model;
@@ -270,13 +372,13 @@ TEST_CASE("agent runner stops at max steps and keeps messages")
     std::string error;
     REQUIRE(tools.Register(echo, error));
 
-    agent::runtime::AgentRunner runner(model, tools);
+    agent::runtime::AgentRunner runner(model, &tools);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 2;
     profile.tool_names = {"echo"};
 
     agent::core::Conversation conversation;
-    const agent::runtime::AgentRunResult result = runner.Run(profile, conversation, "use echo");
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "use echo");
 
     CHECK_FALSE(result.ok);
     CHECK(result.error.find("max steps") != std::string::npos);
@@ -300,12 +402,12 @@ TEST_CASE("agent runner feeds unknown tool errors back to model")
     model.responses = {tool_response, final_response};
 
     agent::runtime::ToolRegistry tools;
-    agent::runtime::AgentRunner runner(model, tools);
+    agent::runtime::AgentRunner runner(model, &tools);
     agent::runtime::AgentProfile profile;
     profile.max_steps = 3;
 
     agent::core::Conversation conversation;
-    const agent::runtime::AgentRunResult result = runner.Run(profile, conversation, "try missing");
+    const agent::runtime::AgentRunResult result = runner.RunTurn(profile, conversation, "try missing");
 
     CHECK(result.ok);
     CHECK(result.content == "recovered");
@@ -336,13 +438,12 @@ TEST_CASE("agent session uses tool registry when present")
     std::string error;
     REQUIRE(tools.Register(echo, error));
 
-    agent::runtime::AgentSessionDependencies dependencies = MakeDependencies(model);
-    dependencies.tools = &tools;
     agent::runtime::AgentSessionConfig config = MakeConfig();
     config.tool_names = {"echo"};
-    agent::runtime::AgentSession session(config, dependencies);
+    agent::runtime::AgentRunner executor(model, &tools);
+    agent::runtime::AgentSession session(config, executor);
 
-    const agent::runtime::AgentRunResult result = session.RunTurn("use echo");
+    const agent::runtime::AgentRunResult result = session.Send("use echo");
 
     CHECK(result.ok);
     CHECK(result.content == "done");

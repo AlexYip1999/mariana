@@ -267,6 +267,81 @@ TEST_CASE("parses tool calls with null content")
     CHECK(response.tool_calls[0].arguments_json == R"({"path":"README.md"})");
 }
 
+TEST_CASE("rejects response without message")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            nlohmann::json choice;
+            choice["finish_reason"] = "stop";
+            nlohmann::json parsed;
+            parsed["choices"] = nlohmann::json::array({choice});
+            agent::transport::HttpResponse response;
+            response.status = 200;
+            response.body = parsed.dump();
+            return response;
+        });
+
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+    const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
+
+    CHECK_FALSE(response.ok);
+    CHECK(response.error.find("choice.message") != std::string::npos);
+}
+
+TEST_CASE("rejects non-array tool_calls")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            nlohmann::json message;
+            message["content"] = "hi";
+            message["tool_calls"] = nlohmann::json::object();
+            nlohmann::json choice;
+            choice["message"] = message;
+            nlohmann::json parsed;
+            parsed["choices"] = nlohmann::json::array({choice});
+            agent::transport::HttpResponse response;
+            response.status = 200;
+            response.body = parsed.dump();
+            return response;
+        });
+
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+    const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
+
+    CHECK_FALSE(response.ok);
+    CHECK(response.error.find("not an array") != std::string::npos);
+}
+
+TEST_CASE("parses finish reason")
+{
+    agent::tests::FakeHttpTransport transport;
+    transport.SetHandler(
+        [](const agent::transport::HttpRequest&)
+        {
+            nlohmann::json message;
+            message["content"] = "partial";
+            nlohmann::json choice;
+            choice["message"] = message;
+            choice["finish_reason"] = "length";
+            nlohmann::json parsed;
+            parsed["choices"] = nlohmann::json::array({choice});
+            agent::transport::HttpResponse response;
+            response.status = 200;
+            response.body = parsed.dump();
+            return response;
+        });
+
+    agent::model::OpenAiChatModel adapter(transport, MakeConfig());
+    const agent::core::ChatResponse response = adapter.Chat(MakeChatRequest());
+
+    CHECK(response.ok);
+    CHECK(response.finish_reason == "length");
+}
+
 TEST_CASE("parses OpenAI-style cached tokens")
 {
     agent::tests::FakeHttpTransport transport;

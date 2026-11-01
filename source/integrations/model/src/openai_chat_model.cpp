@@ -195,9 +195,27 @@ core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
             return response;
         }
 
-        const nlohmann::json& message = parsed["choices"][0]["message"];
-        if (message.contains("tool_calls") && message["tool_calls"].is_array())
+        const nlohmann::json& choice = parsed["choices"][0];
+        if (!choice.is_object() || !choice.contains("message") || !choice["message"].is_object())
         {
+            response.error = "invalid response: choice.message missing";
+            return response;
+        }
+
+        if (choice.contains("finish_reason") && choice["finish_reason"].is_string())
+        {
+            response.finish_reason = choice["finish_reason"].get<std::string>();
+        }
+
+        const nlohmann::json& message = choice["message"];
+        if (message.contains("tool_calls") && !message["tool_calls"].is_null())
+        {
+            if (!message["tool_calls"].is_array())
+            {
+                response.error = "invalid tool_calls: not an array";
+                return response;
+            }
+
             std::set<std::string> call_ids;
             for (const nlohmann::json& item : message["tool_calls"])
             {

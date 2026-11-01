@@ -32,6 +32,27 @@ CliParseResult ParseCliOptions(const std::vector<std::string>& args)
             result.options.config_path = args[++i];
             continue;
         }
+        if (!end_of_options && arg == "--workspace")
+        {
+            if (i + 1 >= args.size())
+            {
+                result.ok = false;
+                result.error = "--workspace requires a path";
+                return result;
+            }
+            result.options.workspace_root = args[++i];
+            continue;
+        }
+        if (!end_of_options && arg == "--no-tools")
+        {
+            result.options.no_tools = true;
+            continue;
+        }
+        if (!end_of_options && arg == "--trust-workspace-config")
+        {
+            result.options.trust_workspace_config = true;
+            continue;
+        }
         if (!end_of_options && arg == "--init-config")
         {
             init_config = true;

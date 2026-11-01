@@ -39,7 +39,7 @@ add_executable(agent_cli_tests
     cli_options_test.cpp
 )
 target_include_directories(agent_cli_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(agent_cli_tests PRIVATE agent_cli_lib agent_metrics agent_third_party)
+target_link_libraries(agent_cli_tests PRIVATE agent_cli_lib agent_metrics agent_tools agent_third_party)
 
 if(WIN32)
     add_executable(agent_transport_winhttp_tests

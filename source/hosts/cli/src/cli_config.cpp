@@ -66,6 +66,16 @@ std::vector<std::string> BuildConfigDirectories(const std::string& executable_pa
     return directories;
 }
 
+bool IsSecureEndpoint(const std::string& endpoint)
+{
+    if (endpoint.rfind("https://", 0) == 0)
+    {
+        return true;
+    }
+    return endpoint.rfind("http://localhost", 0) == 0 || endpoint.rfind("http://127.0.0.1", 0) == 0 ||
+           endpoint.rfind("http://[::1]", 0) == 0;
+}
+
 } // namespace
 
 ConfigLoadResult ParseCliConfig(const std::string& json_text)
@@ -115,6 +125,12 @@ ConfigLoadResult ParseCliConfig(const std::string& json_text, const CliConfig& b
         }
 
         result.config.endpoint = parsed.value("endpoint", result.config.endpoint);
+        if (!IsSecureEndpoint(result.config.endpoint))
+        {
+            result.ok = false;
+            result.error = "endpoint must use https:// (http is only allowed for localhost)";
+            return result;
+        }
         result.config.model = parsed.value("model", result.config.model);
         result.config.api_key_env = parsed.value("api_key_env", result.config.api_key_env);
         result.config.system_prompt = parsed.value("system_prompt", result.config.system_prompt);

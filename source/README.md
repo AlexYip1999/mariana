@@ -12,16 +12,16 @@
 当前模块：
 
 - `core/`：引擎无关的 agent 核心（`agent_core` 库，公共头文件 + 实现）
-- `integrations/`：外部集成（`transport`、`model`、`storage` 待建）
+- `integrations/`：外部集成（`transport`、`model`；include 根与 namespace 仍为 `agent/transport`、`agent/model`）
 - `plugins/`：能力插件（`metrics`、`tools`）
-- `runtime/`：通用 Agent 运行时（`AgentSession`、`AgentRunner`、`ToolRegistry`、`ServiceRegistry`、`SessionDriver`）
+- `runtime/`：通用 Agent 运行时（`AgentSession::Send`、`AgentExecutor`、`AgentRunner`、`ToolRegistry`、`ServiceRegistry`）
 - `hosts/cli/`：宿主 #1，命令行（`agent-cli` 可执行文件）
 
 后续会加入 `hosts/unreal/`、`hosts/android/`、`hosts/ios/` 等宿主模块。
 
 ## 规则
 
-1. 依赖方向：`hosts` → `integrations` → `core`；core 不得反向 include 宿主或外部集成。
+1. 依赖方向：`hosts` → `runtime` / `plugins` / `integrations` → `core`；core 不得反向 include 宿主或外部集成。
 2. 跨模块只通过目标（target）的 **PUBLIC include 目录** 与公开头文件依赖；不要 `#include "../../xxx/src/..."`。
 3. 新增/改名模块时，同步更新根 `CMakeLists.txt` 的 `add_subdirectory`。
 4. 每个模块只导出自有 `include/` 目录；`src/` 里的头文件视为私有实现。

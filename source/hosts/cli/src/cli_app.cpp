@@ -6,7 +6,6 @@
 
 #include "agent/core/stats_view.h"
 #include "agent/runtime/agent_session.h"
-#include "agent/runtime/tool_registry.h"
 
 namespace agent::hosts::cli
 {
@@ -49,7 +48,7 @@ void PrintStats(const core::StatsView* stats, std::ostream& err)
 
 } // namespace
 
-int RunCli(const std::vector<std::string>& args, core::ChatModel& chat_model, const CliConfig& config,
+int RunCli(const std::vector<std::string>& args, runtime::AgentExecutor& executor, const CliConfig& config,
            std::ostream& out, std::ostream& err, runtime::ServiceRegistry& services)
 {
     if (args.empty())
@@ -59,16 +58,10 @@ int RunCli(const std::vector<std::string>& args, core::ChatModel& chat_model, co
     }
 
     const std::shared_ptr<core::StatsView> stats = services.Get<core::StatsView>();
-    const std::shared_ptr<runtime::ToolRegistry> tools = services.Get<runtime::ToolRegistry>();
-    const std::shared_ptr<core::SystemRegistry> systems = services.Get<core::SystemRegistry>();
 
-    runtime::AgentSessionDependencies dependencies;
-    dependencies.model = &chat_model;
-    dependencies.tools = tools.get();
-    dependencies.systems = systems.get();
-    runtime::AgentSession session(MakeSessionConfig(config), dependencies);
+    runtime::AgentSession session(MakeSessionConfig(config), executor);
 
-    const runtime::AgentRunResult result = session.RunTurn(JoinQuestion(args));
+    const runtime::AgentRunResult result = session.Send(JoinQuestion(args));
     if (!result.ok)
     {
         err << "error: " << result.error << "\n";

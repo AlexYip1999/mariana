@@ -242,64 +242,77 @@ services.Set<SystemRegistry>(systems);
 ## 5. AgentRunner（默认 ReAct 执行器）
 
 ```cpp
-struct AgentRunResult
-{
-    bool ok = false;
-    std::string content;
-    std::string error;
-    int steps = 0;
-};
-
-class AgentRunner
+class AgentExecutor
 {
   public:
-    AgentRunner(ChatModel& model, const ToolRegistry& tools, Tracer& tracer);
+    virtual ~AgentExecutor() = default;
 
-    AgentRunResult Run(const AgentProfile& profile, Conversation& conversation, const std::string& user_input);
+    virtual AgentRunResult RunTurn(const AgentProfile& profile, Conversation& conversation,
+                                   const std::string& user_input) = 0;
+};
+
+class AgentRunner : public AgentExecutor
+{
+  public:
+    AgentRunner(ChatModel& model, ToolRegistry* tools, SystemRegistry* systems = nullptr);
+
+    AgentRunResult RunTurn(const AgentProfile& profile, Conversation& conversation,
+                           const std::string& user_input) override;
 };
 ```
 
 ### 5.1 单轮流程
 
 ```text
-1. 把 user_input 追加为 User 消息
-2. 构造 ChatRequest：
-   - model / temperature / max_tokens 由调用方或 Profile 提供
+1. 校验 profile.tool_names 都存在于 ToolRegistry（无 ToolRegistry 时忽略）
+2. SystemRegistry::OnTurnStart
+3. 若 Conversation 没有 System 消息且 profile.system_prompt 非空 → 追加 System
+4. 把 user_input 追加为 User 消息
+5. 构造 ChatRequest：
+   - model / temperature / max_tokens 由 AgentProfile 提供
    - messages = conversation.messages
-   - tools = 按 profile.tool_names 从 registry 取 Specs()
-3. Tracer::OnModelRequest
-4. response = model.Chat(request)
-5. Tracer::OnModelResponse
-6. 把 assistant 消息（content + tool_calls）追加到 conversation
-7. 如果 tool_calls 为空 → 返回 content，结束
-8. 对每个 tool_call：
-   - 查工具；找不到 → 生成错误 ToolResult
-   - Tracer::OnToolCall
-   - 执行工具
-   - Tracer::OnToolResult
-   - 追加 role=Tool、tool_call_id、content/error 的消息
-9. steps += 1；若 steps >= max_steps → 返回错误；否则回到 2（不重复追加 user）
+   - tools = 按 profile.tool_names 从 ToolRegistry 取 SpecsFor()
+6. SystemRegistry::OnModelRequest
+7. response = model.Chat(request)（异常转错误结果）
+8. SystemRegistry::OnModelResponse
+9. 若 !ok → 失败，保留已追加消息
+10. 若 finish_reason ∈ {length, content_filter, insufficient_system_resource} → 失败
+11. 若 tool_calls 为空：
+    - content 为空 → 失败，不追加 assistant
+    - content 非空 → 追加 assistant，成功返回
+12. 否则追加 assistant(content + tool_calls)
+13. 对每个 tool_call：
+    - 校验 tool.name 在 profile.tool_names 内；否则生成 tool not allowed 结果
+    - SystemRegistry::OnToolCall
+    - 执行工具（异常转错误结果）
+    - SystemRegistry::OnToolResult
+    - 追加 role=Tool、tool_call_id、content/error 的消息
+14. 达到 max_steps → 失败，保留已完成消息
+15. SystemRegistry::OnTurnEnd(ok, error, steps)
 ```
 
 ### 5.2 终止条件
 
-- 模型返回无 `tool_calls` → 成功；
-- 达到 `max_steps` → 失败，错误信息明确；
-- 模型调用失败 → 失败，保留已有会话；
+- 模型返回无 `tool_calls` 且 content 非空 → 成功；
+- 达到 `max_steps` → 失败，错误信息明确，保留已完成消息；
+- 模型调用失败 → 失败，保留已追加消息；
+- `finish_reason` 为 length / content_filter / insufficient_system_resource → 失败；
+- 空 content 且无 tool_calls → 失败，不写 assistant；
 - 工具失败不终止循环：把错误作为工具结果回给模型，让它选择重试或换方案；
-- 连续工具失败次数可配置上限（A2 先固定 3）。
+- 模型/工具抛异常 → 转成错误结果，不终止进程。
 
 ### 5.3 安全限制
 
 - 第一版工具只读；
-- `read_file` 只允许工作区相对路径，拒绝绝对路径和 `..` 越界；
-- 单文件读取大小上限（例如 256KB）和总输出上限；
+- `read_file` 只允许 workspace 相对路径，拒绝绝对路径和 `..` 越界；
+- 拒绝 symlink/junction 逃逸和敏感文件（`.env`、`config.local.json`、`.git`、私钥等）；
+- 单文件读取上限（例如 256KB），工具输出有每轮总预算；
 - 工具执行不能阻塞过久；
 - 写操作、命令执行必须等到审批机制和沙箱设计完成后再加。
 
 ### 5.4 执行策略可插拔
 
-`AgentRunner` 只是默认的 **ReAct 执行器**，不是所有应用的固定流程。A2 引入接口，但不实现其他执行器：
+`AgentRunner` 是默认的 **ReAct 执行器**，不是所有应用的固定流程。SDK 只暴露 `AgentExecutor` 接口，host 组合根构造具体执行器：
 
 ```cpp
 class AgentExecutor
@@ -307,8 +320,8 @@ class AgentExecutor
   public:
     virtual ~AgentExecutor() = default;
 
-    virtual AgentRunResult Run(ChatModel& model, const ToolRegistry& tools, const AgentProfile& profile,
-                               Conversation& conversation, const std::string& user_input) = 0;
+    virtual AgentRunResult RunTurn(const AgentProfile& profile, Conversation& conversation,
+                                   const std::string& user_input) = 0;
 };
 ```
 
@@ -321,7 +334,7 @@ class AgentExecutor
 | StateMachineExecutor | NPC 对话/行为、游戏状态机 | 后续 |
 | WorkflowExecutor | DAG / 低代码流程 | 后续 |
 
-host 只依赖 `AgentExecutor`，不直接绑 `AgentRunner`。这样以后新增执行器不需要改 CLI/UE host。
+host 只依赖 `AgentExecutor`，组合根（CLI 的 `main.cpp`）负责构造 `AgentRunner` 并注入。这样以后新增执行器不需要改 CLI/UE host。
 
 ### 5.5 应用流程与上下文结构不同
 
@@ -473,7 +486,8 @@ MCP server
 
 - `choices[0].message.tool_calls[]` → `ToolCall { id, function.name, function.arguments }`；
 - `arguments` 是 **JSON 字符串**，不要二次解析成对象再存 core；
-- `finish_reason == "tool_calls"` 仅用于日志/测试，循环判断以 `tool_calls` 是否为空为准。
+- `tool_calls` 是否为空决定循环是否继续；
+- `finish_reason` 由 adapter 读取；`length` / `content_filter` / `insufficient_system_resource` 视为失败。
 
 工具结果回传：
 
@@ -712,7 +726,9 @@ class ServiceRegistry
 
 不要在工具/插件内部到处 `GetComponent`，否则依赖关系会变成隐式的，测试和初始化顺序都会变难。
 
-### 12.6 AgentRuntime 作为组合根
+### 12.6 AgentRuntime 作为组合根（草案，未实现）
+
+> 当前等价物是 `AgentSession` + 组合根（CLI `main.cpp`）；`AgentRuntime`/`AgentServices` 是后续面向多 Agent 的收口方案。
 
 ```cpp
 struct AgentServices
@@ -745,74 +761,35 @@ class AgentRuntime
 - 一 NPC 一 Agent 只是宿主的一种组装方式；
 - 多 Agent 编排（Router/Orchestrator）不放进 AgentRuntime。
 
-### 12.7 双层循环与 SessionDriver
+### 12.7 双层循环
 
-外层循环（交互方式）也可以插件化/低代码化：
+外层循环（交互方式）与内层执行策略已经分层：
 
 ```text
-外层：SessionDriver
-  决定“什么时候 RunTurn、Run 多少次、输入从哪来、输出到哪”
+外层：host 循环（RunCli / RunInteractive）
+  决定“什么时候 Send、循环多少次、输入从哪来、输出到哪”
     ↓
-内层：AgentExecutor / AgentRunner
-  决定“一次 RunTurn 里，模型↔工具循环怎么跑”
+中层：AgentSession::Send(turn)
+  维护 Conversation 和 AgentProfile
+    ↓
+内层：AgentExecutor::RunTurn
+  决定“一次 Turn 里，模型↔工具循环怎么跑”
 ```
 
-接口草案：
+当前实现：
 
-```cpp
-class InputSource
-{
-  public:
-    virtual ~InputSource() = default;
-    virtual std::optional<std::string> Next() = 0;
-};
-
-class OutputSink
-{
-  public:
-    virtual ~OutputSink() = default;
-    virtual void OnResult(const AgentRunResult& result) = 0;
-};
-
-class SessionDriver
-{
-  public:
-    virtual ~SessionDriver() = default;
-    virtual int Run(AgentSession& session, InputSource& input, OutputSink& output) = 0;
-};
-```
-
-默认 Driver：
-
-| Driver | 行为 |
-|---|---|
-| `OneShotDriver` | 取一次输入 → `RunTurn` → 输出 → 退出 |
-| `InteractiveDriver` | 循环读输入 → `RunTurn` → 维持 Conversation |
-| `EventDriver`（以后） | IM/UE/文件事件 → `RunTurn` |
-| `FlowDriver`（以后） | 低代码节点图控制外层循环 |
-
-关键点：
-
-- `AgentSession::RunTurn(user_input)` 是唯一执行入口；
-- 单轮/交互/事件/低代码都调用它；
-- 单轮/交互只是外层 Driver 不同，不产生两个 Agent 类型；
-- 低代码 Flow 是另一个 Driver，节点包括 input/agent/condition/tool/loop/output；
-- 内层 AgentExecutor 仍负责一次 RunTurn 里的模型↔工具循环。
-
-当前实现策略：
-
-1. 先引入 `AgentSession`，单轮/交互共用 `RunTurn`；
-2. 暂用 `ChatModel::Chat()` 执行单次模型调用；
-3. `AgentRunner` 完成后，把 `AgentSession` 内部切换到 `AgentExecutor`；
-4. 再抽 `SessionDriver` 接口和默认 Driver。
+- `RunCli` / `RunInteractive` 直接调用 `AgentSession::Send`；
+- `AgentSession` 构造时注入 `AgentExecutor&`，不依赖具体 `AgentRunner`；
+- `AgentExecutor` 是接口，`AgentRunner` 是默认 ReAct 实现；
+- 没有 `SessionDriver` 抽象：它没有实现/调用/测试，已移除，等第二个宿主或 CLI 命令抽象落地后再设计。
 
 组件化约束：
 
-- `AgentSession` 使用 `AgentSessionDependencies` 接收依赖，而不是不断扩构造参数；
-- 必需依赖（model、未来的 tools/executor）放依赖结构显式注入；
-- 可选服务（world/logger/event）通过 `ServiceRegistry` 查询；
-- 新增组件时只给依赖结构与 `AgentServices` 加字段，不改 `RunTurn` 签名；
-- 轮次开始由 `Tracer::OnTurnStart()` 发出，host 不直接调用具体 metrics 插件。
+- `AgentSession` 只持有 `AgentProfile` + `AgentExecutor&` + `Conversation`；
+- model/tools/systems 由组合根构造 Executor 时注入，不进入 Session；
+- 可选服务通过 `ServiceRegistry` 在组合根解析，再注入 Executor；
+- turn 级事件由 `AgentSystem::OnTurnStart/OnTurnEnd` 发出，step/tool 事件由 Executor 发出；
+- 新增执行器只需实现 `AgentExecutor`，不改 CLI/UE host。
 
 ### 12.8 实施顺序
 

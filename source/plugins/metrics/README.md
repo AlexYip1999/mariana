@@ -11,15 +11,15 @@
 
 ## 文件
 
-- `metrics_collector.*`：实现 `agent::core::Tracer` + `agent::core::StatsView`；采集由 `AgentSession` 发出的事件驱动
+- `metrics_collector.*`：实现 `agent::core::Tracer` + `agent::core::StatsView`；采集由 `AgentRunner`（AgentExecutor）在 loop 中发出的事件驱动
 - `cost_estimator.*`：DeepSeek 价格表、peak/off-peak 判断、费用计算
 - `metrics_formatter.*`：输出一行状态文本
 
 ## 接口
 
-- 采集：`Tracer::OnTurnStart()` / `OnModelRequest()` / `OnModelResponse()` / `OnToolCall()` / `OnToolResult()`
+- 采集：`Tracer::OnTurnStart()` / `OnModelRequest()` / `OnModelResponse()` / `OnToolCall()` / `OnToolResult()` / `OnTurnEnd()`
 - 展示：`StatsView::CurrentSessionLine()`
-- 组合根把 metrics 注册到 `ServiceRegistry`，host 从 registry 解析 `Tracer` / `StatsView`，不 include 具体 metrics 类型
+- 组合根把 metrics 加入 `SystemRegistry`，把 `StatsView` 注册到 `ServiceRegistry`；host 只解析 `StatsView`，不 include 具体 metrics 类型
 
 ## 使用
 
@@ -32,7 +32,7 @@
 .\build\vs2022\bin\Debug\agent-cli.exe --stats --interactive
 ```
 
-统计输出到 `stderr`，不污染模型回答的 stdout。
+单轮模式的 `--stats` 输出到 `stderr`；交互模式的 `/stats` 输出到 `stdout`。
 
 ## 费用估算说明
 

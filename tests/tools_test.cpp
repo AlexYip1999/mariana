@@ -6,6 +6,7 @@
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -63,6 +64,72 @@ TEST_CASE("reads a file inside the workspace")
     CHECK(tool.Spec().parameters_json.find("\"path\"") != std::string::npos);
     CHECK(result.ok);
     CHECK(result.content == "hello");
+}
+
+TEST_CASE("rejects symlink escape")
+{
+    TempWorkspace workspace;
+    const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    const std::filesystem::path outside =
+        std::filesystem::temp_directory_path() / ("agent-core-tools-outside-" + std::to_string(stamp));
+    std::filesystem::create_directories(outside);
+    WriteFile(outside / "secret.txt", "secret");
+
+    std::error_code error;
+    std::filesystem::create_directory_symlink(outside, workspace.Path() / "link", error);
+    if (error)
+    {
+        std::filesystem::remove_all(outside);
+        WARN("symlink creation is not available");
+        return;
+    }
+
+    agent::plugins::tools::ReadFileTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute(R"({"path":"link/secret.txt"})");
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("escapes workspace") != std::string::npos);
+
+    std::filesystem::remove_all(outside);
+}
+
+TEST_CASE("rejects sensitive files")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / ".env", "SECRET=1");
+    WriteFile(workspace.Path() / "config.local.json", "{}");
+    WriteFile(workspace.Path() / "private.key", "-----BEGIN KEY-----");
+
+    agent::plugins::tools::ReadFileTool tool(workspace.Path());
+
+    const std::vector<std::string> sensitive_files = {".env", "config.local.json", "private.key"};
+    for (const std::string& name : sensitive_files)
+    {
+        const std::string arguments = std::string("{\"path\":\"") + name + "\"}";
+        const agent::core::ToolResult result = tool.Execute(arguments);
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("sensitive file") != std::string::npos);
+    }
+}
+
+TEST_CASE("rejects nested and case-variant sensitive files")
+{
+    TempWorkspace workspace;
+    std::filesystem::create_directories(workspace.Path() / "sub");
+    WriteFile(workspace.Path() / "sub" / ".env", "SECRET=1");
+    WriteFile(workspace.Path() / ".ENV", "SECRET=1");
+    WriteFile(workspace.Path() / "Private.KEY", "-----BEGIN KEY-----");
+
+    agent::plugins::tools::ReadFileTool tool(workspace.Path());
+
+    const std::vector<std::string> names = {R"({"path":"sub/.env"})", R"({"path":".ENV"})",
+                                            R"({"path":"Private.KEY"})"};
+    for (const std::string& arguments : names)
+    {
+        const agent::core::ToolResult result = tool.Execute(arguments);
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("sensitive file") != std::string::npos);
+    }
 }
 
 TEST_CASE("rejects binary files")

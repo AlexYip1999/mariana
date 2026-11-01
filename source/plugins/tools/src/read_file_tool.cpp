@@ -1,8 +1,10 @@
 #include "agent/plugins/tools/read_file_tool.h"
 
+#include <algorithm>
+#include <cctype>
 #include <exception>
 #include <fstream>
-#include <sstream>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -99,6 +101,40 @@ bool IsWithinWorkspace(const std::filesystem::path& canonical_root, const std::f
     return first != "..";
 }
 
+std::string LowerAscii(std::string value)
+{
+    for (char& character : value)
+    {
+        character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+    }
+    return value;
+}
+
+bool IsSensitiveComponent(const std::filesystem::path& component)
+{
+    const std::string name = LowerAscii(component.string());
+    if (name == ".env" || name.rfind(".env.", 0) == 0 || name == "config.local.json" || name == ".git" ||
+        name == ".docker" || name == ".kube" || name == "id_rsa" || name == "id_ed25519" || name == "id_ecdsa" ||
+        name == ".git-credentials" || name == ".netrc" || name == ".npmrc" || name == ".pypirc" || name == ".htpasswd")
+    {
+        return true;
+    }
+    return name.ends_with(".key") || name.ends_with(".pem") || name.ends_with(".pfx") || name.ends_with(".p12") ||
+           name.ends_with(".jks") || name.ends_with(".ppk") || name.ends_with(".kdbx");
+}
+
+bool IsSensitivePath(const std::filesystem::path& relative)
+{
+    for (const std::filesystem::path& component : relative)
+    {
+        if (IsSensitiveComponent(component))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path Utf8Path(const std::string& text)
 {
 #if defined(_WIN32)
@@ -188,6 +224,10 @@ core::ToolResult ReadFileTool::ExecuteRead(const std::string& relative_path) con
     {
         return MakeError("path escapes workspace");
     }
+    if (IsSensitivePath(candidate.lexically_relative(canonical_root)))
+    {
+        return MakeError("sensitive file is not readable");
+    }
 
     const std::filesystem::file_status status = std::filesystem::status(candidate, error);
     if (error)
@@ -215,19 +255,22 @@ core::ToolResult ReadFileTool::ExecuteRead(const std::string& relative_path) con
         return MakeError("cannot open file: " + relative_path);
     }
 
-    std::ostringstream content;
-    content << file.rdbuf();
-    if (!file.good() && !file.eof())
+    std::string content;
+    content.resize(static_cast<std::size_t>(m_max_read_bytes + 1));
+    file.read(content.data(), static_cast<std::streamsize>(content.size()));
+    const std::streamsize read_count = file.gcount();
+    if (!file.eof() && !file.good())
     {
         return MakeError("cannot read file: " + relative_path);
     }
-
-    core::ToolResult result;
-    result.content = content.str();
-    if (result.content.size() > m_max_read_bytes)
+    if (read_count < 0 || static_cast<std::uintmax_t>(read_count) > m_max_read_bytes)
     {
         return MakeError("file is too large");
     }
+    content.resize(static_cast<std::size_t>(read_count));
+
+    core::ToolResult result;
+    result.content = std::move(content);
     if (!IsValidUtf8(result.content))
     {
         return MakeError("file is not valid UTF-8 text");

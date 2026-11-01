@@ -145,7 +145,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
     对应配置：`PackConstructorInitializers: Never`、`BreakConstructorInitializers: BeforeComma`、`BraceWrapping.SplitEmptyFunction: false`。
   - 非空函数体仍保持 Allman：`{` 和 `}` 各占一行。
 - **namespace 内部使用相对限定名**：在 `namespace agent::...` 内引用 `agent` 下的兄弟命名空间时，写 `core::`、`model::`、`transport::`、`runtime::`、`plugins::`，不要重复 `agent::`。
-  - 例：`namespace agent::runtime` 内写 `core::ChatModel`，而不是 `agent::core::ChatModel`；
+  - 例：`namespace agent::runtime` 内写 `core::ChatModel`，而不是 `agent::core::ChatModel`；`source/integrations/transport` 的 include 根仍是 `agent/transport`。
   - `main.cpp` 等全局作用域、以及 `tests/` 里不在 `agent` 命名空间内的代码，仍使用完整 `agent::...`。
 - **不要格式化或修改 `third_party/`、`build/`**。
 - 不要修改 `.clang-format`、`scripts/*.ps1`，除非任务明确就是改规范；规范变更单独提交。

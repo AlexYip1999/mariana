@@ -17,11 +17,14 @@ enum class CliMode
 
 struct CliOptions
 {
-    CliMode mode = CliMode::Chat;
     bool init_config = false;
-    std::string config_path;
-    std::vector<std::string> question;
     bool stats = false;
+    bool no_tools = false;
+    bool trust_workspace_config = false;
+    CliMode mode = CliMode::Chat;
+    std::string config_path;
+    std::string workspace_root;
+    std::vector<std::string> question;
 };
 
 struct CliParseResult

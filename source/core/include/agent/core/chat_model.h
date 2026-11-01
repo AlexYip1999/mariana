@@ -35,6 +35,7 @@ struct ChatResponse
     std::string content;
     std::vector<ToolCall> tool_calls;
     ChatUsage usage;
+    std::string finish_reason;
     std::string error;
 };
 

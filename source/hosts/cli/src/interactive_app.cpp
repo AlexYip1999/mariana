@@ -6,7 +6,6 @@
 
 #include "agent/core/stats_view.h"
 #include "agent/runtime/agent_session.h"
-#include "agent/runtime/tool_registry.h"
 
 namespace agent::hosts::cli
 {
@@ -20,6 +19,7 @@ void PrintHelp(std::ostream& out)
         << "  /clear  clear conversation history\n"
         << "  /stats  show current session statistics\n"
         << "  /exit   exit\n"
+        << "  /quit   exit\n"
         << "  /help   show this help\n";
 }
 
@@ -56,19 +56,12 @@ void PrintStatsCommand(const core::StatsView* stats, std::ostream& out)
 
 } // namespace
 
-int RunInteractive(core::ChatModel& chat_model, const CliConfig& config, std::istream& in, std::ostream& out,
+int RunInteractive(runtime::AgentExecutor& executor, const CliConfig& config, std::istream& in, std::ostream& out,
                    std::ostream& err, runtime::ServiceRegistry& services, bool auto_print_stats)
 {
     const std::shared_ptr<core::StatsView> stats = services.Get<core::StatsView>();
-    const std::shared_ptr<runtime::ToolRegistry> tools = services.Get<runtime::ToolRegistry>();
-    const std::shared_ptr<core::SystemRegistry> systems = services.Get<core::SystemRegistry>();
 
-    runtime::AgentSessionDependencies dependencies;
-    dependencies.model = &chat_model;
-    dependencies.tools = tools.get();
-    dependencies.systems = systems.get();
-
-    runtime::AgentSession session(MakeSessionConfig(config), dependencies);
+    runtime::AgentSession session(MakeSessionConfig(config), executor);
 
     std::string line;
     while (true)
@@ -105,7 +98,7 @@ int RunInteractive(core::ChatModel& chat_model, const CliConfig& config, std::is
             continue;
         }
 
-        const runtime::AgentRunResult result = session.RunTurn(line);
+        const runtime::AgentRunResult result = session.Send(line);
         if (!result.ok)
         {
             err << "error: " << result.error << "\n";

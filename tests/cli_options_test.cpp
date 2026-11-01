@@ -78,6 +78,33 @@ TEST_CASE("supports end of options marker")
     CHECK(result.options.question[0] == "-not-an-option");
 }
 
+TEST_CASE("parses workspace and no-tools options")
+{
+    const agent::hosts::cli::CliParseResult result =
+        agent::hosts::cli::ParseCliOptions({"--interactive", "--workspace", "project", "--no-tools"});
+
+    CHECK(result.ok);
+    CHECK(result.options.mode == agent::hosts::cli::CliMode::Interactive);
+    CHECK(result.options.workspace_root == "project");
+    CHECK(result.options.no_tools);
+}
+
+TEST_CASE("parses trust workspace config option")
+{
+    const agent::hosts::cli::CliParseResult result = agent::hosts::cli::ParseCliOptions({"--trust-workspace-config"});
+
+    CHECK(result.ok);
+    CHECK(result.options.trust_workspace_config);
+}
+
+TEST_CASE("requires workspace path")
+{
+    const agent::hosts::cli::CliParseResult result = agent::hosts::cli::ParseCliOptions({"--workspace"});
+
+    CHECK_FALSE(result.ok);
+    CHECK(result.error.find("requires a path") != std::string::npos);
+}
+
 TEST_CASE("rejects conflicting modes")
 {
     const agent::hosts::cli::CliParseResult interactive_with_question =
