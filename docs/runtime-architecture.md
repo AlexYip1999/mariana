@@ -373,12 +373,14 @@ source/core/include/agent/core/
   chat_model.h          ChatRequest / ChatResponse
 
 source/runtime/include/agent/runtime/
-  run_context.h         RunContext / RunBudget / RunStatus
+  agent_profile.h       AgentProfile / RunOptions
+  execution_id.h        ExecutionId（NewSession / NewRun）
+  run_context.h         RunContext / RunBudget / RunStatus / Create
   agent.h               AgentDescriptor / AgentScope / AgentDependencies / Agent
   agent_session.h       AgentSession
   agent_executor.h      AgentExecutor
   agent_runner.h        AgentRunner / RunnerDependencies
-  agent_run.h           RunOptions / TurnRecord / AgentRunResult
+  agent_run.h           TurnRecord / ToEvent / AgentRunResult
   turn_transaction.h    TurnTransaction / TurnWorkspace / TurnCommit
   turn_executor.h       ExecuteTurn（Session 与测试共用）
   system_notifier.h     AgentSystem 通知隔离

@@ -5,6 +5,8 @@ add_library(agent_runtime
     src/agent_session.cpp
     src/composition.cpp
     src/context_policy.cpp
+    src/execution_id.cpp
+    src/run_context.cpp
     src/tool_output_policy.cpp
     src/tool_registry.cpp
     src/tool_dispatcher.cpp

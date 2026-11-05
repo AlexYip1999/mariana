@@ -201,7 +201,7 @@ std::optional<std::string> AgentRunner::ValidationError(const AgentProfile& prof
     {
         return std::nullopt;
     }
-    return DescribeCompositionIssues(validation);
+    return validation.Describe();
 }
 
 std::shared_ptr<core::SystemRegistry> AgentRunner::SystemRegistry() const
@@ -237,8 +237,7 @@ RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& work
             const CompositionValidation validation = ValidateComposition(m_dependencies, profile);
             if (!validation.Ok())
             {
-                outcome = {RunStatus::Failed, RunErrorCode::InvalidConfiguration,
-                           DescribeCompositionIssues(validation)};
+                outcome = {RunStatus::Failed, RunErrorCode::InvalidConfiguration, validation.Describe()};
             }
             else
             {

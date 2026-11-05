@@ -977,7 +977,7 @@ TEST_CASE("composition validation rejects side-effecting tools without approval"
     profile.tool_names = {"write_file"};
     const agent::runtime::CompositionValidation validation = agent::runtime::ValidateComposition(dependencies, profile);
     CHECK_FALSE(validation.Ok());
-    CHECK(agent::runtime::DescribeCompositionIssues(validation).find("approval") != std::string::npos);
+    CHECK(validation.Describe().find("approval") != std::string::npos);
 }
 
 TEST_CASE("tool registry rejects invalid registrations")

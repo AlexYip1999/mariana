@@ -4,6 +4,7 @@
 #include <string>
 
 #include "agent/core/call_context.h"
+#include "agent/runtime/agent_profile.h"
 
 namespace agent::runtime
 {
@@ -134,6 +135,10 @@ struct RunContext
 
     // 本轮预算
     RunBudget budget;
+
+    /// 创建 RunContext 的唯一入口；生成 session/run id 与生效预算。
+    static RunContext Create(const AgentProfile& profile, const std::string& session_id,
+                             const RunOptions& options = {});
 
     RunErrorCode Interruption() const
     {

@@ -40,7 +40,7 @@ inline runtime::AgentRunResult RunTurnForTest(runtime::AgentRunner& runner, cons
                                               core::Conversation& conversation, const std::string& input,
                                               std::shared_ptr<core::SystemRegistry> systems = nullptr)
 {
-    const runtime::RunContext context = runtime::MakeRunContext(profile, conversation.session_id);
+    const runtime::RunContext context = runtime::RunContext::Create(profile, conversation.session_id);
     core::SystemRegistry empty_systems;
     runtime::TurnExecution execution =
         runtime::ExecuteTurn(profile, conversation, runner, input, context, systems ? *systems : empty_systems);
@@ -50,7 +50,7 @@ inline runtime::AgentRunResult RunTurnForTest(runtime::AgentRunner& runner, cons
     }
     if (systems)
     {
-        runtime::SystemNotifier(*systems).TurnFinished(runtime::MakeTurnEvent(execution.result));
+        runtime::SystemNotifier(*systems).TurnFinished(execution.result.ToEvent());
     }
     return execution.result;
 }

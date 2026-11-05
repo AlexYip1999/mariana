@@ -91,16 +91,16 @@ CompositionValidation ValidateComposition(const RunnerDependencies& dependencies
     return validation;
 }
 
-std::string DescribeCompositionIssues(const CompositionValidation& validation)
+std::string CompositionValidation::Describe() const
 {
     std::ostringstream stream;
-    for (std::size_t index = 0; index < validation.issues.size(); ++index)
+    for (std::size_t index = 0; index < issues.size(); ++index)
     {
         if (index != 0)
         {
             stream << "; ";
         }
-        stream << validation.issues[index].field << ": " << validation.issues[index].message;
+        stream << issues[index].field << ": " << issues[index].message;
     }
     return stream.str();
 }

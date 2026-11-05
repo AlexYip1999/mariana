@@ -17,6 +17,7 @@
 #include "agent/hosts/cli/host_services.h"
 #include "agent/hosts/cli/run_loop.h"
 #include "agent/hosts/cli/tool_catalog.h"
+#include "agent/runtime/execution_id.h"
 
 namespace agent::hosts::cli
 {
@@ -173,7 +174,7 @@ int RunHost(const std::vector<std::string>& args, const HostEnvironment& environ
         return 2;
     }
 
-    const std::string session_id = runtime::NewExecutionId("session");
+    const std::string session_id = runtime::ExecutionId::NewSession();
     HostServicesConfig services_config;
     services_config.config = config;
     services_config.workspace = workspace;

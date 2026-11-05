@@ -18,7 +18,7 @@
 | `source/integrations/` | 外部集成：模型、传输、存储等平台/协议实现 |
 | `source/integrations/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
 | `source/integrations/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 integrations |
-| `source/runtime/` | 通用 Agent 运行时：`Agent`（身份 + `AgentScope` + 会话 + `AgentDependencies`）、scoped `ServiceRegistry`、`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`、`ExecuteTurn`、`RunContext`、`TurnTransaction`、`TurnWorkspace`、`RunOutcome`、`TurnEvent`、`ToolDispatcher`、`ToolDescriptor`、`ValidateComposition`、`ToolRegistry`、`ToolPolicy`/`ContextPolicy`/`ToolOutputPolicy` |
+| `source/runtime/` | 通用 Agent 运行时：`Agent`（身份 + `AgentScope` + 会话 + `AgentDependencies`）、scoped `ServiceRegistry`、`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`、`RunContext::Create`、`ExecutionId`、`TurnTransaction`、`TurnWorkspace`、`RunOutcome`、`TurnRecord::ToEvent`、`ToolDispatcher`、`ToolDescriptor`、`ValidateComposition`、`ToolRegistry`、`ToolPolicy`/`ContextPolicy`/`ToolOutputPolicy` |
 | `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（WorkspacePathPolicy、句柄级复核、敏感文件拒绝、UTF-8 校验、大小限制） |
 | `source/plugins/traces/` | JSONL trace 插件：默认开启，记录 turn/model/tool/usage，内容截断与 key 脱敏；usage 聚合与 trace viewer |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |

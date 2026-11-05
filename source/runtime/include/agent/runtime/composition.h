@@ -23,12 +23,12 @@ struct CompositionValidation
     {
         return issues.empty();
     }
+
+    /// 把 issues 拼成一条可读错误。
+    std::string Describe() const;
 };
 
 /// 构建期/运行前组合校验：依赖完整性、tool 元数据、线程亲和与副作用审批。
 CompositionValidation ValidateComposition(const RunnerDependencies& dependencies, const AgentProfile& profile);
-
-/// 把 issues 拼成一条可读错误。
-std::string DescribeCompositionIssues(const CompositionValidation& validation);
 
 } // namespace agent::runtime

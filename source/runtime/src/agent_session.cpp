@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "agent/runtime/execution_id.h"
 #include "agent/runtime/system_notifier.h"
 #include "agent/runtime/turn_executor.h"
 
@@ -79,7 +80,7 @@ AgentSession::AgentSession(AgentSessionConfig config, std::shared_ptr<AgentExecu
                            std::shared_ptr<core::SystemRegistry> systems, std::size_t max_records)
     : m_profile(std::move(config))
     , m_executor(std::move(executor))
-    , m_session_id(session_id.empty() ? NewExecutionId("session") : std::move(session_id))
+    , m_session_id(session_id.empty() ? ExecutionId::NewSession() : std::move(session_id))
     , m_systems(systems ? std::move(systems) : std::make_shared<core::SystemRegistry>())
     , m_max_records(max_records)
 {
@@ -120,7 +121,7 @@ AgentRunResult AgentSession::Send(const std::string& user_input, const RunOption
     TurnExecution execution;
     try
     {
-        context = MakeRunContext(profile, m_session_id, options);
+        context = RunContext::Create(profile, m_session_id, options);
         AgentRunResult preflight;
         if (PreflightFailure(profile, user_input, context, preflight))
         {
@@ -180,7 +181,7 @@ AgentRunResult AgentSession::Send(const std::string& user_input, const RunOption
             m_records.erase(m_records.begin(), m_records.begin() + (m_records.size() - m_max_records));
         }
     }
-    SystemNotifier(*m_systems).TurnFinished(MakeTurnEvent(execution.result));
+    SystemNotifier(*m_systems).TurnFinished(execution.result.ToEvent());
     return execution.result;
 }
 
