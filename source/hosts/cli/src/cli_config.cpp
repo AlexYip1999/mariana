@@ -1,8 +1,11 @@
 #include "agent/hosts/cli/cli_config.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -68,12 +71,89 @@ std::vector<std::string> BuildConfigDirectories(const std::string& executable_pa
 
 bool IsSecureEndpoint(const std::string& endpoint)
 {
-    if (endpoint.rfind("https://", 0) == 0)
+    for (const unsigned char character : endpoint)
     {
-        return true;
+        if (character <= 0x20 || character == 0x7F || character == '\\')
+        {
+            return false;
+        }
     }
-    return endpoint.rfind("http://localhost", 0) == 0 || endpoint.rfind("http://127.0.0.1", 0) == 0 ||
-           endpoint.rfind("http://[::1]", 0) == 0;
+    const std::size_t separator = endpoint.find("://");
+    if (separator == std::string::npos)
+    {
+        return false;
+    }
+    std::string scheme = endpoint.substr(0, separator);
+    const std::string_view remainder = std::string_view(endpoint).substr(separator + 3);
+    std::string authority(remainder.substr(0, remainder.find_first_of("/?#")));
+    std::string* parts[] = {&scheme, &authority};
+    for (std::string* part : parts)
+    {
+        for (char& character : *part)
+        {
+            if (character >= 'A' && character <= 'Z')
+            {
+                character = static_cast<char>(character + ('a' - 'A'));
+            }
+        }
+    }
+    if (authority.empty() || authority.find_first_of("@%") != std::string::npos)
+    {
+        return false;
+    }
+
+    std::string_view host = authority;
+    std::string_view port;
+    if (authority.front() == '[')
+    {
+        const std::size_t close = authority.find(']');
+        if (close == std::string::npos)
+        {
+            return false;
+        }
+        host = host.substr(0, close + 1);
+    }
+    else
+    {
+        host = host.substr(0, host.find(':'));
+    }
+    if (host.size() < authority.size())
+    {
+        if (authority[host.size()] != ':')
+        {
+            return false;
+        }
+        port = std::string_view(authority).substr(host.size() + 1);
+        if (port.empty() || port.size() > 5 || port.find_first_not_of("0123456789") != std::string_view::npos)
+        {
+            return false;
+        }
+        const int port_number = std::stoi(std::string(port));
+        if (port_number == 0 || port_number > 65535)
+        {
+            return false;
+        }
+    }
+    if (host.empty())
+    {
+        return false;
+    }
+    const bool is_loopback = host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+    return scheme == "https" || (scheme == "http" && is_loopback);
+}
+
+bool IsIntegerInRange(const nlohmann::json& value, std::uint64_t minimum, std::uint64_t maximum)
+{
+    if (!value.is_number_integer())
+    {
+        return false;
+    }
+    if (!value.is_number_unsigned() && value.get<std::int64_t>() < 0)
+    {
+        return false;
+    }
+    const auto number = value.get<std::uint64_t>();
+    return number >= minimum && number <= maximum;
 }
 
 } // namespace
@@ -134,9 +214,30 @@ ConfigLoadResult ParseCliConfig(const std::string& json_text, const CliConfig& b
         result.config.model = parsed.value("model", result.config.model);
         result.config.api_key_env = parsed.value("api_key_env", result.config.api_key_env);
         result.config.system_prompt = parsed.value("system_prompt", result.config.system_prompt);
+        const char* integer_fields[] = {"timeout_ms",           "max_tokens",      "max_steps",
+                                        "max_context_chars",    "turn_timeout_ms", "max_tool_calls",
+                                        "max_tool_output_bytes"};
+        for (const char* field : integer_fields)
+        {
+            const bool is_size_budget = std::string_view(field) == "max_context_chars" ||
+                                        std::string_view(field) == "max_tool_calls" ||
+                                        std::string_view(field) == "max_tool_output_bytes";
+            const std::uint64_t maximum =
+                is_size_budget ? std::numeric_limits<std::size_t>::max() : std::numeric_limits<int>::max();
+            if (parsed.contains(field) && !IsIntegerInRange(parsed[field], is_size_budget ? 0 : 1, maximum))
+            {
+                result.ok = false;
+                result.error = std::string(field) + " must be an integer in the supported range";
+                return result;
+            }
+        }
         result.config.timeout_ms = parsed.value("timeout_ms", result.config.timeout_ms);
         result.config.max_tokens = parsed.value("max_tokens", result.config.max_tokens);
         result.config.max_steps = parsed.value("max_steps", result.config.max_steps);
+        result.config.turn_timeout_ms = parsed.value("turn_timeout_ms", result.config.turn_timeout_ms);
+        result.config.max_tool_calls = parsed.value("max_tool_calls", result.config.max_tool_calls);
+        result.config.max_tool_output_bytes =
+            parsed.value("max_tool_output_bytes", result.config.max_tool_output_bytes);
         result.config.temperature = parsed.value("temperature", result.config.temperature);
         result.config.max_context_chars = parsed.value("max_context_chars", result.config.max_context_chars);
 
@@ -279,6 +380,9 @@ ConfigInitResult WriteDefaultCliConfigFile(const std::string& path)
     config_json["timeout_ms"] = defaults.timeout_ms;
     config_json["max_tokens"] = defaults.max_tokens;
     config_json["max_steps"] = defaults.max_steps;
+    config_json["turn_timeout_ms"] = defaults.turn_timeout_ms;
+    config_json["max_tool_calls"] = defaults.max_tool_calls;
+    config_json["max_tool_output_bytes"] = defaults.max_tool_output_bytes;
     config_json["temperature"] = defaults.temperature;
     config_json["max_context_chars"] = defaults.max_context_chars;
     config_json["tool_names"] = defaults.tool_names;
@@ -300,7 +404,7 @@ ConfigInitResult WriteDefaultCliConfigFile(const std::string& path)
     return result;
 }
 
-std::string ResolveApiKey(const CliConfig& config, const std::function<std::string(const std::string&)>& get_env)
+std::string ResolveApiKey(const CliConfig& config, const EnvironmentLookup& get_env)
 {
     if (config.api_key_env.empty() || !get_env)
     {

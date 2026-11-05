@@ -3,6 +3,13 @@
 #include <windows.h>
 #include <winhttp.h>
 
+#include <array>
+#include <chrono>
+#include <condition_variable>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -97,11 +104,154 @@ std::string LastWindowsError()
     return FormatWindowsError(GetLastError());
 }
 
+bool ReadContentLength(HINTERNET request, std::size_t limit, std::optional<std::size_t>& expected,
+                       HttpResponse& response)
+{
+    wchar_t text[64]{};
+    DWORD size = sizeof(text);
+    // Transfer-Encoding takes precedence over Content-Length.
+    if (WinHttpQueryHeaders(request, WINHTTP_QUERY_TRANSFER_ENCODING, WINHTTP_HEADER_NAME_BY_INDEX, text, &size,
+                            WINHTTP_NO_HEADER_INDEX))
+    {
+        return true;
+    }
+    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+    {
+        return true;
+    }
+    size = sizeof(text);
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, text, &size,
+                             WINHTTP_NO_HEADER_INDEX))
+    {
+        if (GetLastError() == ERROR_WINHTTP_HEADER_NOT_FOUND)
+        {
+            return true;
+        }
+        response.error = "invalid HTTP Content-Length";
+        return false;
+    }
+    const std::wstring_view value(text, size / sizeof(wchar_t));
+    if (value.empty() || value.find_first_not_of(L"0123456789") != std::wstring_view::npos)
+    {
+        response.error = "invalid HTTP Content-Length";
+        return false;
+    }
+    std::size_t length = 0;
+    for (const wchar_t character : value)
+    {
+        const auto digit = static_cast<std::size_t>(character - L'0');
+        if (length > limit / 10 || (length == limit / 10 && digit > limit % 10))
+        {
+            response.error = "HTTP response exceeds size limit";
+            return false;
+        }
+        length = length * 10 + digit;
+    }
+    expected = length;
+    return true;
+}
+
+struct AsyncState
+{
+    std::mutex mutex;
+    std::condition_variable_any changed;
+    bool completed = false;
+    DWORD error = ERROR_SUCCESS;
+    DWORD bytes_read = 0;
+    std::array<char, 8192> buffer{};
+    std::string request_body;
+    std::wstring headers;
+
+    void Reset()
+    {
+        std::lock_guard lock(mutex);
+        completed = false;
+        error = ERROR_SUCCESS;
+        bytes_read = 0;
+    }
+
+    bool Wait(std::chrono::steady_clock::time_point deadline, std::stop_token stop_token, HttpResponse& response)
+    {
+        std::unique_lock lock(mutex);
+        changed.wait_until(lock, stop_token, deadline,
+                           [&]()
+                           {
+                               return completed;
+                           });
+        if (stop_token.stop_requested())
+        {
+            response.error = "HTTP request cancelled";
+        }
+        else if (!completed || std::chrono::steady_clock::now() >= deadline)
+        {
+            response.error = "HTTP request deadline exceeded";
+        }
+        else if (error != ERROR_SUCCESS)
+        {
+            response.error = "WinHTTP request failed: " + FormatWindowsError(error);
+        }
+        return response.error.empty();
+    }
+};
+
+using AsyncContext = std::shared_ptr<AsyncState>;
+
+void CALLBACK OnHttpStatus(HINTERNET, DWORD_PTR context_value, DWORD status, void* information, DWORD length)
+{
+    if (context_value == 0)
+    {
+        return;
+    }
+    auto* context = reinterpret_cast<AsyncContext*>(context_value);
+    const auto state = *context;
+    if (status == WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING)
+    {
+        // WinHTTP may call back after CloseHandle returns. Keep buffers alive until this final notification.
+        delete context;
+        return;
+    }
+    {
+        std::lock_guard lock(state->mutex);
+        switch (status)
+        {
+        case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
+            state->error = static_cast<WINHTTP_ASYNC_RESULT*>(information)->dwError;
+            break;
+        case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
+            state->bytes_read = length;
+            break;
+        case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
+        case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
+            break;
+        default:
+            return;
+        }
+        state->completed = true;
+    }
+    state->changed.notify_all();
+}
+
 } // namespace
 
 HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
 {
     HttpResponse response;
+    if (request.timeout_ms <= 0 || request.max_response_bytes == 0)
+    {
+        response.error = "HTTP timeout and response size limit must be positive";
+        return response;
+    }
+    if (request.stop_token.stop_requested())
+    {
+        response.error = "HTTP request cancelled";
+        return response;
+    }
+    if (request.body.size() > (std::numeric_limits<DWORD>::max)())
+    {
+        response.error = "HTTP request body too large";
+        return response;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(request.timeout_ms);
 
     const std::wstring url = Utf8ToWide(request.url);
 
@@ -127,7 +277,7 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
     const bool secure = components.nScheme == INTERNET_SCHEME_HTTPS;
 
     WinHttpHandle session(WinHttpOpen(L"agent-core/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-                                      WINHTTP_NO_PROXY_BYPASS, 0));
+                                      WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC));
     if (session.value == nullptr)
     {
         response.error = "WinHttpOpen failed: " + LastWindowsError();
@@ -158,28 +308,62 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         return response;
     }
 
-    std::wstring header_block;
-    for (const auto& header : request.headers)
+    DWORD redirect_policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    if (!WinHttpSetOption(http_request.value, WINHTTP_OPTION_REDIRECT_POLICY, &redirect_policy,
+                          sizeof(redirect_policy)))
     {
-        header_block += Utf8ToWide(header.first);
-        header_block += L": ";
-        header_block += Utf8ToWide(header.second);
-        header_block += L"\r\n";
+        response.error = "cannot disable HTTP redirects: " + LastWindowsError();
+        return response;
     }
 
+    const auto state = std::make_shared<AsyncState>();
+    auto context = std::make_unique<AsyncContext>(state);
+    DWORD_PTR context_value = reinterpret_cast<DWORD_PTR>(context.get());
+    if (!WinHttpSetOption(http_request.value, WINHTTP_OPTION_CONTEXT_VALUE, &context_value, sizeof(context_value)))
+    {
+        response.error = "cannot set HTTP context: " + LastWindowsError();
+        return response;
+    }
+    const DWORD callback_flags = WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES;
+    if (WinHttpSetStatusCallback(http_request.value, OnHttpStatus, callback_flags, 0) ==
+        WINHTTP_INVALID_STATUS_CALLBACK)
+    {
+        response.error = "cannot set HTTP callback: " + LastWindowsError();
+        return response;
+    }
+    context.release(); // Released by the final HANDLE_CLOSING callback, including on early returns.
+
+    for (const auto& header : request.headers)
+    {
+        state->headers += Utf8ToWide(header.first);
+        state->headers += L": ";
+        state->headers += Utf8ToWide(header.second);
+        state->headers += L"\r\n";
+    }
+
+    state->request_body = request.body;
     const DWORD body_size = static_cast<DWORD>(request.body.size());
     if (!WinHttpSendRequest(http_request.value,
-                            header_block.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : header_block.c_str(),
-                            header_block.empty() ? 0 : static_cast<DWORD>(-1),
-                            body_size == 0 ? nullptr : const_cast<char*>(request.body.data()), body_size, body_size, 0))
+                            state->headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : state->headers.c_str(),
+                            state->headers.empty() ? 0 : static_cast<DWORD>(-1),
+                            body_size == 0 ? nullptr : state->request_body.data(), body_size, body_size, context_value))
     {
         response.error = "WinHttpSendRequest failed: " + LastWindowsError();
         return response;
     }
+    if (!state->Wait(deadline, request.stop_token, response))
+    {
+        return response;
+    }
 
+    state->Reset();
     if (!WinHttpReceiveResponse(http_request.value, nullptr))
     {
         response.error = "WinHttpReceiveResponse failed: " + LastWindowsError();
+        return response;
+    }
+    if (!state->Wait(deadline, request.stop_token, response))
+    {
         return response;
     }
 
@@ -192,38 +376,46 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         return response;
     }
     response.status = static_cast<int>(status_code);
+    std::optional<std::size_t> expected_length;
+    const bool has_body = response.status != 204 && response.status != 304;
+    if (has_body && !ReadContentLength(http_request.value, request.max_response_bytes, expected_length, response))
+    {
+        return response;
+    }
 
     std::string body;
     for (;;)
     {
-        DWORD available = 0;
-        if (!WinHttpQueryDataAvailable(http_request.value, &available))
-        {
-            response.error = "WinHttpQueryDataAvailable failed: " + LastWindowsError();
-            return response;
-        }
-        if (available == 0)
-        {
-            break;
-        }
-
-        const size_t old_size = body.size();
-        body.resize(old_size + available);
-
-        DWORD read = 0;
-        if (!WinHttpReadData(http_request.value, body.data() + old_size, available, &read))
+        state->Reset();
+        if (!WinHttpReadData(http_request.value, state->buffer.data(), static_cast<DWORD>(state->buffer.size()),
+                             nullptr))
         {
             response.error = "WinHttpReadData failed: " + LastWindowsError();
             return response;
         }
-
-        body.resize(old_size + read);
+        if (!state->Wait(deadline, request.stop_token, response))
+        {
+            return response;
+        }
+        const DWORD read = state->bytes_read;
         if (read == 0)
         {
             break;
         }
+
+        if (read > request.max_response_bytes - body.size())
+        {
+            response.error = "HTTP response exceeds size limit";
+            return response;
+        }
+        body.append(state->buffer.data(), read);
     }
 
+    if (expected_length && body.size() != *expected_length)
+    {
+        response.error = "HTTP response body incomplete";
+        return response;
+    }
     response.body = std::move(body);
     return response;
 }

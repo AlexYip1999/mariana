@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "agent/core/call_context.h"
+
 namespace agent::core
 {
 
@@ -19,6 +21,7 @@ struct ToolResult
     bool ok = true;
     std::string content;
     std::string error;
+    CallError error_code = CallError::None;
 };
 
 namespace detail
@@ -58,7 +61,7 @@ class Tool
     virtual std::string Name() const = 0;
     virtual std::string Description() const = 0;
     virtual std::string ParametersJson() const = 0;
-    virtual ToolResult Execute(const std::string& arguments_json) = 0;
+    virtual ToolResult Execute(const std::string& arguments_json, const CallContext& context = {}) = 0;
 
     /// 由工具元数据生成 ToolSpec，避免每个调用方重复拼装。
     ToolSpec Spec() const

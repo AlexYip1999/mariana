@@ -1,10 +1,11 @@
-#include "agent/hosts/cli/interactive_app.h"
+#include "agent/hosts/cli/run_loop.h"
 
 #include <iostream>
 #include <memory>
 #include <string>
 
 #include "agent/core/stats_view.h"
+#include "agent/hosts/cli/cli_command.h"
 
 namespace agent::hosts::cli
 {
@@ -33,8 +34,8 @@ void PrintStats(const core::StatsView* stats, std::ostream& err)
 
 } // namespace
 
-int RunInteractive(runtime::Agent& agent, std::istream& in, std::ostream& out, std::ostream& err,
-                   runtime::ServiceRegistry& services, bool auto_print_stats)
+int RunCliLoop(runtime::Agent& agent, runtime::ServiceRegistry& services, std::istream& in, std::ostream& out,
+               std::ostream& err, bool auto_print_stats)
 {
     const std::shared_ptr<core::StatsView> stats = services.Get<core::StatsView>();
     const std::shared_ptr<CommandRegistry> commands = services.Get<CommandRegistry>();
@@ -81,7 +82,7 @@ int RunInteractive(runtime::Agent& agent, std::istream& in, std::ostream& out, s
         }
 
         const runtime::AgentRunResult result = agent.Send(command_line);
-        if (!result.ok)
+        if (!result.Ok())
         {
             err << "error: " << result.error << "\n";
             if (auto_stats_enabled())

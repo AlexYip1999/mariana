@@ -1,4 +1,4 @@
-#include "agent/hosts/cli/cli_command.h"
+#include "agent/hosts/cli/tool_catalog.h"
 
 #include <filesystem>
 #include <memory>
@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "agent/core/version.h"
+#include "agent/hosts/cli/cli_command.h"
 #include "agent/plugins/tools/read_file_tool.h"
 #include "agent/plugins/traces/trace_usage.h"
 #include "agent/plugins/traces/trace_viewer.h"
@@ -40,25 +41,6 @@ std::pair<std::string, std::string> SplitCommand(const std::string& line)
     return {line.substr(0, separator), Trim(line.substr(separator + 1))};
 }
 
-bool RebuildTools(CliContext& context, runtime::Agent& agent, std::ostream& err)
-{
-    context.tools->Clear();
-    if (context.tools_enabled)
-    {
-        std::string tool_error;
-        if (!context.tools->Register(std::make_shared<plugins::tools::ReadFileTool>(context.workspace), tool_error))
-        {
-            err << "tool registration failed: " << tool_error << "\n";
-            return false;
-        }
-    }
-
-    runtime::AgentProfile profile = agent.Profile();
-    profile.tool_names = context.tools_enabled ? std::vector<std::string>{"read_file"} : std::vector<std::string>{};
-    agent.SetProfile(std::move(profile));
-    return true;
-}
-
 std::filesystem::path ResolveTracePath(const CliContext& context, const std::string& value)
 {
     if (value.empty())
@@ -80,18 +62,27 @@ std::filesystem::path ResolveTracePath(const CliContext& context, const std::str
     return path;
 }
 
-void PrintConfig(std::ostream& out, const CliConfig& config)
+void PrintConfig(std::ostream& out, const CliConfig& config, const runtime::AgentProfile& profile)
 {
     out << "config:\n"
         << "  provider=" << config.provider << "\n"
         << "  endpoint=" << config.endpoint << "\n"
-        << "  model=" << config.model << "\n"
+        << "  model=" << profile.model << "\n"
         << "  api_key_env=" << config.api_key_env << "\n"
-        << "  max_tokens=" << config.max_tokens << "\n"
-        << "  max_steps=" << config.max_steps << "\n"
-        << "  max_context_chars=" << config.max_context_chars << "\n"
-        << "  temperature=" << config.temperature << "\n"
-        << "  cost_currency=" << config.cost_currency << "\n";
+        << "  max_tokens=" << profile.max_tokens << "\n"
+        << "  max_steps=" << profile.max_steps << "\n"
+        << "  turn_timeout_ms=" << profile.turn_timeout_ms << "\n"
+        << "  max_tool_calls=" << profile.max_tool_calls << "\n"
+        << "  max_tool_output_bytes=" << profile.max_tool_output_bytes << "\n"
+        << "  max_context_chars=" << profile.max_context_chars << "\n"
+        << "  temperature=" << profile.temperature << "\n"
+        << "  cost_currency=" << config.cost_currency << "\n"
+        << "  tool_names=";
+    for (const auto& name : profile.tool_names)
+    {
+        out << name << " ";
+    }
+    out << "\n";
 }
 
 class HelpCommand final : public CliCommand
@@ -154,12 +145,12 @@ class ConfigCommand final : public CliCommand
         return "/config show|init";
     }
 
-    CommandResult Execute(CliContext& context, runtime::Agent&, const std::string& args, std::ostream& out,
+    CommandResult Execute(CliContext& context, runtime::Agent& agent, const std::string& args, std::ostream& out,
                           std::ostream& err) override
     {
         if (args == "show")
         {
-            PrintConfig(out, context.config);
+            PrintConfig(out, context.config, agent.Profile());
             return CommandResult::Handled;
         }
         if (args == "init")
@@ -209,11 +200,13 @@ class WorkspaceCommand final : public CliCommand
             err << "invalid workspace: " << args << "\n";
             return CommandResult::Handled;
         }
-        context.workspace = workspace;
-        if (RebuildTools(context, agent, err))
+        if (!context.create_executor || !agent.Reconfigure(agent.Profile(), context.create_executor(workspace)))
         {
-            out << "workspace: " << workspace.string() << "\n";
+            err << "cannot change workspace while a turn is active\n";
+            return CommandResult::Handled;
         }
+        context.workspace = workspace;
+        out << "workspace: " << workspace.string() << "\n";
         return CommandResult::Handled;
     }
 };
@@ -239,11 +232,19 @@ class ToolsCommand final : public CliCommand
             out << "usage: /tools on|off\n";
             return CommandResult::Handled;
         }
-        context.tools_enabled = args == "on";
-        if (RebuildTools(context, agent, err))
+        auto profile = agent.Profile();
+        if (context.tool_catalog == nullptr)
         {
-            out << "tools: " << (context.tools_enabled ? "on" : "off") << "\n";
+            err << "tool catalog is not configured\n";
+            return CommandResult::Handled;
         }
+        profile.tool_names = args == "on" ? context.tool_catalog->Names() : std::vector<std::string>{};
+        if (!agent.SetProfile(std::move(profile)))
+        {
+            err << "cannot change tools while a turn is active\n";
+            return CommandResult::Handled;
+        }
+        out << "tools: " << args << "\n";
         return CommandResult::Handled;
     }
 };
@@ -351,8 +352,7 @@ class ClearCommand final : public CliCommand
     CommandResult Execute(CliContext&, runtime::Agent& agent, const std::string&, std::ostream& out,
                           std::ostream&) override
     {
-        agent.ClearHistory();
-        out << "history cleared\n";
+        out << (agent.ClearHistory() ? "history cleared\n" : "cannot clear history while a turn is active\n");
         return CommandResult::Handled;
     }
 };

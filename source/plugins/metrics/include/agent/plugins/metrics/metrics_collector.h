@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <string>
 
 #include "agent/core/chat_model.h"
@@ -31,10 +32,11 @@ class MetricsCollector : public core::Tracer, public core::StatsView
     void OnToolCall(const core::ToolCall& call) override;
     void OnToolResult(const core::ToolCall& call, const core::ToolResult& result) override;
 
-    const MetricsSnapshot& Snapshot() const;
+    MetricsSnapshot Snapshot() const;
     std::string CurrentSessionLine() const override;
 
   private:
+    mutable std::mutex m_mutex;
     void ApplyUsage(const core::ChatResponse& response, double duration_seconds);
     void ApplyCost(const core::ChatUsage& usage);
 

@@ -19,7 +19,7 @@ class ReadFileTool : public core::Tool
     std::string Name() const override;
     std::string Description() const override;
     std::string ParametersJson() const override;
-    core::ToolResult Execute(const std::string& arguments_json) override;
+    core::ToolResult Execute(const std::string& arguments_json, const core::CallContext& context = {}) override;
 
   private:
     core::ToolResult ExecuteRead(const std::string& relative_path) const;

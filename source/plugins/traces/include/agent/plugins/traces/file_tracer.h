@@ -25,19 +25,25 @@ class FileTracer : public core::Tracer
     void Close();
 
     void OnTurnStart() override;
+    void OnTurnStarted(const core::TurnEvent& event) override;
     void OnModelRequest(const core::ChatRequest& request) override;
     void OnModelResponse(const core::ChatResponse& response) override;
     void OnToolCall(const core::ToolCall& call) override;
     void OnToolResult(const core::ToolCall& call, const core::ToolResult& result) override;
+    void OnToolReplayed(const core::ToolCall& call, const core::ToolResult& result) override;
     void OnTurnEnd(bool ok, const std::string& error, int steps) override;
+    void OnTurnEnded(const core::TurnEvent& event) override;
 
   private:
+    void StartTurn(const core::TurnEvent* event);
+    void EndTurn(const core::TurnEvent* event, bool ok, const std::string& error, int steps);
     void WriteEvent(const std::string& json_line);
     std::string Timestamp() const;
     std::string Sanitize(std::string text) const;
 
     std::filesystem::path m_path;
     std::string m_session_id;
+    std::string m_run_id;
     std::shared_ptr<TraceSink> m_sink;
     int m_turn = 0;
     int m_step = 0;

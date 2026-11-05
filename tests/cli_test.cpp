@@ -13,14 +13,16 @@
 #include <vector>
 
 #include "agent/core/system_registry.h"
+#include "agent/hosts/cli/cli_command.h"
 #include "agent/hosts/cli/cli_config.h"
-#include "agent/hosts/cli/interactive_app.h"
+#include "agent/hosts/cli/run_loop.h"
 #include "agent/model/openai_chat_model.h"
 #include "agent/plugins/metrics/metrics_collector.h"
 #include "agent/plugins/tools/read_file_tool.h"
 #include "agent/runtime/agent_runner.h"
 #include "agent/runtime/tool_registry.h"
 #include "support/fake_http_transport.h"
+#include "support/runtime_fixture.h"
 
 namespace
 {
@@ -100,7 +102,7 @@ class TestExecutor
 {
   public:
     TestExecutor(agent::core::ChatModel& model, agent::runtime::ServiceRegistry& services)
-        : m_executor(model, services)
+        : m_executor(MakeDependencies(model, services))
     {}
 
     agent::runtime::AgentExecutor& Get()
@@ -109,6 +111,20 @@ class TestExecutor
     }
 
   private:
+    static agent::runtime::RunnerDependencies MakeDependencies(agent::core::ChatModel& model,
+                                                               agent::runtime::ServiceRegistry& services)
+    {
+        if (!services.Get<agent::runtime::ToolRegistry>())
+        {
+            auto tools = std::make_shared<agent::runtime::ToolRegistry>();
+            std::string error;
+            tools->Register(std::make_shared<agent::plugins::tools::ReadFileTool>(std::filesystem::current_path()),
+                            error);
+            services.Set<agent::runtime::ToolRegistry>(tools);
+        }
+        return agent::tests::MakeRunnerDependencies(model, services);
+    }
+
     agent::runtime::AgentRunner m_executor;
 };
 
@@ -140,9 +156,9 @@ agent::runtime::Agent MakeAgent(const agent::hosts::cli::CliConfig& config, agen
     descriptor.id.value = "cli";
     descriptor.name = "agent-cli";
     descriptor.version = "test";
-    descriptor.profile = profile;
+    descriptor.default_profile = profile;
 
-    agent::runtime::AgentServices agent_services;
+    agent::runtime::AgentDependencies agent_services;
     agent_services.services = std::shared_ptr<agent::runtime::ServiceRegistry>(&services,
                                                                                [](agent::runtime::ServiceRegistry*)
                                                                                {
@@ -155,6 +171,20 @@ agent::runtime::Agent MakeAgent(const agent::hosts::cli::CliConfig& config, agen
 }
 
 } // namespace
+
+TEST_CASE("cli validates and loads total turn budgets")
+{
+    const auto parsed =
+        agent::hosts::cli::ParseCliConfig(R"({"turn_timeout_ms":750,"max_tool_calls":2,"max_tool_output_bytes":99})");
+    REQUIRE(parsed.ok);
+    CHECK(parsed.config.turn_timeout_ms == 750);
+    CHECK(parsed.config.max_tool_calls == 2);
+    CHECK(parsed.config.max_tool_output_bytes == 99);
+    CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"turn_timeout_ms":0})").ok);
+    CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"max_tool_calls":-1})").ok);
+    CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"max_tool_output_bytes":1.5})").ok);
+    CHECK(agent::hosts::cli::ParseCliConfig(R"({"max_tool_calls":0,"max_tool_output_bytes":0})").ok);
+}
 
 TEST_CASE("parses cli config overrides")
 {
@@ -191,6 +221,53 @@ TEST_CASE("rejects insecure endpoint")
 
     CHECK_FALSE(result.ok);
     CHECK(result.error.find("https") != std::string::npos);
+}
+
+TEST_CASE("HTTP endpoint exceptions require an exact loopback host")
+{
+    const std::vector<std::string> allowed = {"http://localhost/chat", "http://127.0.0.1:8080/chat",
+                                              "http://[::1]:8080/chat", "HTTP://LOCALHOST:80/chat",
+                                              "https://example.test/chat"};
+    const std::vector<std::string> denied = {"http://localhost.attacker.example/chat",
+                                             "http://127.0.0.1@attacker.example/chat",
+                                             "http://localhost@attacker.example/chat",
+                                             "http://[::1].attacker.example/chat",
+                                             "http://localhost:80@attacker.example/chat",
+                                             "http://localhost:abc/chat",
+                                             "http://localhost:65536/chat",
+                                             "http://localhost:/chat",
+                                             "http://localhost%2eattacker.example/chat",
+                                             "http://localhost\\@attacker.example/chat",
+                                             "https:///chat",
+                                             "http://localhost\n/chat"};
+    for (const auto& endpoint : allowed)
+    {
+        CAPTURE(endpoint);
+        CHECK(agent::hosts::cli::ParseCliConfig(nlohmann::json{{"endpoint", endpoint}}.dump()).ok);
+    }
+    for (const auto& endpoint : denied)
+    {
+        CAPTURE(endpoint);
+        CHECK_FALSE(agent::hosts::cli::ParseCliConfig(nlohmann::json{{"endpoint", endpoint}}.dump()).ok);
+    }
+}
+
+TEST_CASE("rejects negative fractional and overflowing integer settings")
+{
+    const char* fields[] = {"timeout_ms", "max_tokens", "max_steps", "max_context_chars"};
+    const double invalid_values[] = {-1.0, 1.5};
+    for (const char* field : fields)
+    {
+        for (const double value : invalid_values)
+        {
+            CAPTURE(field);
+            CHECK_FALSE(agent::hosts::cli::ParseCliConfig(nlohmann::json{{field, value}}.dump()).ok);
+        }
+    }
+    CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"timeout_ms":0})").ok);
+    CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"timeout_ms":4294967297})").ok);
+    CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"max_context_chars":-1})").ok);
+    CHECK(agent::hosts::cli::ParseCliConfig(R"({"max_context_chars":0})").ok);
 }
 
 TEST_CASE("rejects invalid tool names")
@@ -379,8 +456,8 @@ TEST_CASE("resolves api key from environment lookup")
 
 TEST_CASE("runs a single question and prints content")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             return MakeChatResponse("hello");
@@ -394,14 +471,14 @@ TEST_CASE("runs a single question and prints content")
     AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
-    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, out, err, services);
+    const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, out, err);
 
     CHECK(exit_code == 0);
     CHECK(out.str().find("hello") != std::string::npos);
     CHECK(err.str().empty());
-    CHECK(transport.RequestCount() == 1);
+    CHECK(transport->RequestCount() == 1);
 
-    const nlohmann::json body = nlohmann::json::parse(transport.LastRequest().body);
+    const nlohmann::json body = nlohmann::json::parse(transport->LastRequest().body);
     CHECK(body["messages"].size() == 2);
     CHECK(body["messages"][0]["role"] == "system");
     CHECK(body["messages"][1]["role"] == "user");
@@ -421,8 +498,8 @@ TEST_CASE("runs a tool call end to end through cli")
 
     int request_count = 0;
     std::string first_body;
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [&](const agent::transport::HttpRequest& request)
         {
             ++request_count;
@@ -465,18 +542,18 @@ TEST_CASE("runs a tool call end to end through cli")
     AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
-    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, out, err, services);
+    const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, out, err);
 
     CHECK(exit_code == 0);
     CHECK(out.str().find("done") != std::string::npos);
     CHECK(err.str().empty());
-    CHECK(transport.RequestCount() == 2);
+    CHECK(transport->RequestCount() == 2);
 
     const nlohmann::json first_request = nlohmann::json::parse(first_body);
     REQUIRE(first_request["tools"].size() == 1);
     CHECK(first_request["tools"][0]["function"]["name"] == "read_file");
 
-    const nlohmann::json second_request = nlohmann::json::parse(transport.LastRequest().body);
+    const nlohmann::json second_request = nlohmann::json::parse(transport->LastRequest().body);
     const nlohmann::json& tool_message = second_request["messages"].back();
     CHECK(tool_message["role"] == "tool");
     CHECK(tool_message["tool_call_id"] == "call_1");
@@ -487,8 +564,8 @@ TEST_CASE("runs a tool call end to end through cli")
 
 TEST_CASE("reports model errors")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             agent::transport::HttpResponse response;
@@ -504,7 +581,7 @@ TEST_CASE("reports model errors")
     AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
-    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, out, err, services);
+    const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, out, err);
 
     CHECK(exit_code == 0);
     CHECK(err.str().find("timeout") != std::string::npos);
@@ -525,7 +602,7 @@ TEST_CASE("interactive chat keeps history and handles commands")
     AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(config, executor.Get(), services);
-    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, output, error, services);
+    const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, output, error);
 
     CHECK(exit_code == 0);
     CHECK(adapter.requests.size() == 3);
@@ -565,7 +642,7 @@ TEST_CASE("interactive trims whitespace before commands")
     AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(config, executor.Get(), services);
-    CHECK(agent::hosts::cli::RunInteractive(agent, input, output, error, services) == 0);
+    CHECK(agent::hosts::cli::RunCliLoop(agent, services, input, output, error) == 0);
     CHECK(output.str().find("[stats]") != std::string::npos);
     CHECK(adapter.requests.empty());
 }
@@ -590,7 +667,7 @@ TEST_CASE("interactive reports metrics when enabled")
     AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(config, executor.Get(), services);
-    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, output, error, services, true);
+    const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, output, error, true);
 
     CHECK(exit_code == 0);
     CHECK(metrics->Snapshot().turns == 1);
@@ -618,7 +695,7 @@ TEST_CASE("interactive stats command reports current session")
     AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(config, executor.Get(), services);
-    const int exit_code = agent::hosts::cli::RunInteractive(agent, input, output, error, services, false);
+    const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, output, error, false);
 
     CHECK(exit_code == 0);
     CHECK(metrics->Snapshot().turns == 1);

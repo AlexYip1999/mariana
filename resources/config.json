@@ -8,6 +8,9 @@
   "timeout_ms": 30000,
   "max_tokens": 1024,
   "max_steps": 8,
+  "turn_timeout_ms": 120000,
+  "max_tool_calls": 64,
+  "max_tool_output_bytes": 32768,
   "temperature": 0.0,
   "max_context_chars": 120000,
   "tool_names": [

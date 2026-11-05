@@ -24,13 +24,15 @@
 - 敏感文件拒绝（启发式，不是完整防护）：`.env` / `.env.*`、`config.local.json`、`.git`、`.docker`、`.kube`、`id_rsa` / `id_ed25519` / `id_ecdsa`、`.git-credentials`、`.netrc`、`.npmrc`、`.pypirc`、`.htpasswd`、`*.key` / `*.pem` / `*.pfx` / `*.p12` / `*.jks` / `*.ppk` / `*.kdbx`。
 - 单文件有读取上限，且只接受 UTF-8 文本；二进制/GBK/UTF-16 会返回错误。
 - 工具结果进入模型上下文后视为不可信内容；文件里的“忽略之前指令”等 prompt injection 可能影响模型决策，不能作为授权依据。
-- `/trace` 写文件前会截断内容并脱敏 `sk-...`；仍应把 trace 目录视为可能含敏感业务数据。
+- `/trace` 写文件前会按 UTF-8 字符边界截断内容并脱敏 `sk-...`；仍应把 trace 目录视为可能含敏感业务数据。
 - 不要把 workspace 指向 HOME、仓库根或包含凭据的目录；敏感目录只应通过显式 workspace 白名单开放。
 
 ## 配置信任边界
 
-- `endpoint` 必须使用 `https://`，只有 localhost 允许 `http://`。
-- CLI 会自动加载 cwd 的 `config.json` / `config.local.json`；若 cwd 配置修改 `endpoint`、`api_key_env`、`model` 或 `system_prompt`，默认拒绝，必须显式 `--trust-workspace-config`。
+- `endpoint` 必须使用 `https://`，仅严格匹配 `localhost`、`127.0.0.1`、`[::1]` 的主机允许 `http://`，拒绝 URL 用户信息、异常端口和控制字符。
+- CLI 会自动加载 cwd 的 `config.json` / `config.local.json`；若 cwd 配置修改 `endpoint`、`api_key_env`、`model` 或 `system_prompt`，默认拒绝，必须用 `--config <path>` 显式指定可信配置。
+- WinHTTP 禁用自动重定向；3xx 返回上层处理，不转发 Authorization 和请求正文。单次请求遵守总时限，响应体默认上限 8 MiB（包括错误响应）。
+- 观察者回调异常不会中断 Agent 执行；工具授权必须由 `ToolPolicy` 等策略执行，不能依赖日志回调抛异常。
 - 不要在不可信仓库中运行 `agent-cli` 并同时持有高价值环境变量；把 key 放在独立进程环境或代理网关。
 - 工具输出和配置文件内容都可能被 prompt injection 利用；授权动作（写文件、执行命令）必须走独立审批，不要只靠模型判断。
 

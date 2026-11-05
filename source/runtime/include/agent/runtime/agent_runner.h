@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+#include <optional>
 #include <string>
 
 #include "agent/core/agent_system.h"
@@ -9,7 +11,7 @@
 #include "agent/runtime/agent_executor.h"
 #include "agent/runtime/agent_run.h"
 #include "agent/runtime/context_policy.h"
-#include "agent/runtime/service_registry.h"
+#include "agent/runtime/tool_dispatcher.h"
 #include "agent/runtime/tool_output_policy.h"
 #include "agent/runtime/tool_policy.h"
 #include "agent/runtime/tool_registry.h"
@@ -17,22 +19,38 @@
 namespace agent::runtime
 {
 
+/// The composition root owns defaults and validation choices. Runner never queries a service locator.
+struct RunnerDependencies
+{
+    // 模型与工具
+    std::shared_ptr<core::ChatModel> model;
+    std::shared_ptr<const ToolRegistry> tools;
+
+    // 策略
+    std::shared_ptr<const ToolPolicy> tool_policy;
+    std::shared_ptr<const ContextPolicy> context_policy;
+    std::shared_ptr<const ToolOutputPolicy> tool_output_policy;
+
+    // 宿主线程与观察
+    std::shared_ptr<ToolScheduler> tool_scheduler;
+    std::shared_ptr<core::SystemRegistry> systems;
+};
+
 /// 默认 ReAct 执行器：模型请求 → tool_calls → 执行工具 → 继续，直到最终回答或 max_steps。
 class AgentRunner : public AgentExecutor
 {
   public:
-    AgentRunner(core::ChatModel& model, ServiceRegistry& services);
+    AgentRunner(RunnerDependencies dependencies);
 
-    AgentRunResult RunTurn(const AgentProfile& profile, core::Conversation& conversation,
-                           const std::string& user_input) override;
+    RunOutcome RunTurn(const AgentProfile& profile, TurnWorkspace& workspace, const std::string& user_input,
+                       const RunContext& context) override;
+
+    std::optional<std::string> ValidationError(const AgentProfile& profile) const override;
+
+    std::shared_ptr<core::SystemRegistry> SystemRegistry() const override;
 
   private:
-    core::ChatModel& m_model;
-    std::shared_ptr<ToolRegistry> m_tools;
-    std::shared_ptr<core::SystemRegistry> m_systems;
-    std::shared_ptr<ToolPolicy> m_tool_policy;
-    std::shared_ptr<ContextPolicy> m_context_policy;
-    std::shared_ptr<ToolOutputPolicy> m_tool_output_policy;
+    RunnerDependencies m_dependencies;
 };
 
 } // namespace agent::runtime

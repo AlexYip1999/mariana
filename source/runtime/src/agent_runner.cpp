@@ -1,326 +1,265 @@
 #include "agent/runtime/agent_runner.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <exception>
+#include <set>
+#include <stdexcept>
 #include <utility>
+
+#include "agent/runtime/composition.h"
+#include "agent/runtime/system_notifier.h"
+#include "agent/runtime/turn_transaction.h"
 
 namespace agent::runtime
 {
-
 namespace
 {
 
-bool HasSystemMessage(const core::Conversation& conversation)
+RunOutcome Decided(RunOutcome result, RunStatus status, RunErrorCode code, std::string error,
+                   std::string content = std::string())
 {
-    for (const core::ChatMessage& message : conversation.messages)
+    result.status = status;
+    result.error_code = code;
+    result.error = std::move(error);
+    result.content = std::move(content);
+    return result;
+}
+
+RunOutcome Interrupted(RunOutcome result, RunErrorCode code)
+{
+    if (code == RunErrorCode::Cancelled)
     {
-        if (message.role == core::ChatRole::System)
+        return Decided(std::move(result), RunStatus::Cancelled, code, "agent turn cancelled");
+    }
+    return Decided(std::move(result), RunStatus::BudgetExceeded, code, "agent turn deadline exceeded");
+}
+
+bool IsFatalToolError(RunErrorCode code)
+{
+    return code == RunErrorCode::ToolCallLimit || code == RunErrorCode::ToolOutputLimit ||
+           code == RunErrorCode::InvalidToolCall;
+}
+
+bool HasIncompleteResponse(const core::ChatResponse& response)
+{
+    return response.finish_reason == "length" || response.finish_reason == "content_filter" ||
+           response.finish_reason == "insufficient_system_resource";
+}
+
+bool HasValidToolCalls(const std::vector<core::ToolCall>& calls)
+{
+    std::set<std::string> ids;
+    for (const auto& call : calls)
+    {
+        if (call.id.empty() || !core::IsValidToolName(call.name) || !ids.insert(call.id).second)
         {
-            return true;
+            return false;
         }
     }
-    return false;
-}
-
-void NotifyTurnStart(core::SystemRegistry* systems)
-{
-    if (systems == nullptr)
-    {
-        return;
-    }
-    for (const std::shared_ptr<core::AgentSystem>& system : systems->Systems())
-    {
-        system->OnTurnStart();
-    }
-}
-
-void NotifyModelRequest(core::SystemRegistry* systems, const core::ChatRequest& request)
-{
-    if (systems == nullptr)
-    {
-        return;
-    }
-    for (const std::shared_ptr<core::AgentSystem>& system : systems->Systems())
-    {
-        system->OnModelRequest(request);
-    }
-}
-
-void NotifyModelResponse(core::SystemRegistry* systems, const core::ChatResponse& response)
-{
-    if (systems == nullptr)
-    {
-        return;
-    }
-    for (const std::shared_ptr<core::AgentSystem>& system : systems->Systems())
-    {
-        system->OnModelResponse(response);
-    }
-}
-
-void NotifyToolCall(core::SystemRegistry* systems, const core::ToolCall& call)
-{
-    if (systems == nullptr)
-    {
-        return;
-    }
-    for (const std::shared_ptr<core::AgentSystem>& system : systems->Systems())
-    {
-        system->OnToolCall(call);
-    }
-}
-
-void NotifyToolResult(core::SystemRegistry* systems, const core::ToolCall& call, const core::ToolResult& result)
-{
-    if (systems == nullptr)
-    {
-        return;
-    }
-    for (const std::shared_ptr<core::AgentSystem>& system : systems->Systems())
-    {
-        system->OnToolResult(call, result);
-    }
-}
-
-void NotifyTurnEnd(core::SystemRegistry* systems, bool ok, const std::string& error, int steps)
-{
-    if (systems == nullptr)
-    {
-        return;
-    }
-    for (const std::shared_ptr<core::AgentSystem>& system : systems->Systems())
-    {
-        system->OnTurnEnd(ok, error, steps);
-    }
-}
-
-bool IsToolAllowed(const AgentProfile& profile, const std::string& name)
-{
-    return std::find(profile.tool_names.begin(), profile.tool_names.end(), name) != profile.tool_names.end();
+    return true;
 }
 
 } // namespace
 
-AgentRunner::AgentRunner(core::ChatModel& model, ServiceRegistry& services)
-    : m_model(model)
-    , m_tools(services.Get<ToolRegistry>())
-    , m_systems(services.Get<core::SystemRegistry>())
-    , m_tool_policy(services.Get<ToolPolicy>())
-    , m_context_policy(services.Get<ContextPolicy>())
-    , m_tool_output_policy(services.Get<ToolOutputPolicy>())
+static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentProfile& profile,
+                           TurnWorkspace& workspace, const RunContext& context, const SystemNotifier& notifier,
+                           RunOutcome& result)
 {
-    if (!m_tool_policy)
+    core::Conversation& conversation = workspace.Conversation();
+    const auto specs = dependencies.tools->SpecsFor(profile.tool_names);
+    ToolDispatcher dispatcher(*dependencies.tools, *dependencies.tool_policy, *dependencies.tool_output_policy,
+                              *dependencies.tool_scheduler, notifier, context);
+    for (int step = 0; step < context.budget.max_model_calls; ++step)
     {
-        m_tool_policy = std::make_shared<AllowAllToolPolicy>();
+        if (context.Interruption() != RunErrorCode::None)
+        {
+            return Interrupted(std::move(result), context.Interruption());
+        }
+        core::ChatRequest request;
+        request.call = context.call;
+        request.model = profile.model;
+        request.temperature = profile.temperature;
+        request.max_tokens = profile.max_tokens;
+        request.tools = specs;
+        request.messages = dependencies.context_policy->Prepare(conversation.messages, profile.max_context_chars);
+        notifier.ModelRequested(request);
+        if (context.Interruption() != RunErrorCode::None)
+        {
+            return Interrupted(std::move(result), context.Interruption());
+        }
+        ++result.steps;
+        core::ChatResponse response;
+        try
+        {
+            response = dependencies.model->Chat(request);
+        }
+        catch (const std::exception& error)
+        {
+            response.error = std::string("model call failed: ") + error.what();
+            response.error_code = core::CallError::ModelFailure;
+        }
+        catch (...)
+        {
+            response.error = "model call failed";
+            response.error_code = core::CallError::ModelFailure;
+        }
+        notifier.ModelResponded(response);
+        if (context.Interruption() != RunErrorCode::None)
+        {
+            return Interrupted(std::move(result), context.Interruption());
+        }
+        if (!response.ok)
+        {
+            const auto call_code =
+                response.error_code == core::CallError::None ? core::CallError::ModelFailure : response.error_code;
+            const auto code = ToRunError(call_code);
+            if (code == RunErrorCode::Cancelled || code == RunErrorCode::DeadlineExceeded)
+            {
+                return Interrupted(std::move(result), code);
+            }
+            return Decided(std::move(result), RunStatus::Failed, code, response.error);
+        }
+        if (HasIncompleteResponse(response))
+        {
+            return Decided(std::move(result), RunStatus::Failed, RunErrorCode::IncompleteResponse,
+                           "model response incomplete: " + response.finish_reason);
+        }
+        if (response.tool_calls.empty())
+        {
+            if (response.content.empty())
+            {
+                return Decided(std::move(result), RunStatus::Failed, RunErrorCode::EmptyResponse,
+                               "model returned empty response");
+            }
+            conversation.Append(core::ChatRole::Assistant, response.content);
+            return Decided(std::move(result), RunStatus::Completed, RunErrorCode::None, {}, response.content);
+        }
+        if (!HasValidToolCalls(response.tool_calls))
+        {
+            return Decided(std::move(result), RunStatus::Failed, RunErrorCode::InvalidToolCall,
+                           "invalid tool call id or name");
+        }
+        core::ChatMessage assistant;
+        assistant.role = core::ChatRole::Assistant;
+        assistant.content = response.content;
+        assistant.tool_calls = response.tool_calls;
+        conversation.Append(std::move(assistant));
+        for (const auto& call : response.tool_calls)
+        {
+            const ToolDispatchResult dispatched = dispatcher.Execute(call, profile.tool_names, result);
+            if (context.Interruption() != RunErrorCode::None)
+            {
+                return Interrupted(std::move(result), context.Interruption());
+            }
+            if (dispatched.error_code == RunErrorCode::Cancelled ||
+                dispatched.error_code == RunErrorCode::DeadlineExceeded)
+            {
+                return Interrupted(std::move(result), dispatched.error_code);
+            }
+            if (IsFatalToolError(dispatched.error_code))
+            {
+                const auto status = dispatched.error_code == RunErrorCode::InvalidToolCall ? RunStatus::Failed
+                                                                                           : RunStatus::BudgetExceeded;
+                return Decided(std::move(result), status, dispatched.error_code, dispatched.result.error);
+            }
+            core::ChatMessage tool_message;
+            tool_message.role = core::ChatRole::Tool;
+            tool_message.tool_call_id = call.id;
+            tool_message.content = dispatched.result.ok ? dispatched.result.content : dispatched.result.error;
+            conversation.Append(std::move(tool_message));
+        }
     }
-    if (!m_context_policy)
-    {
-        m_context_policy = std::make_shared<KeepRecentTurnsPolicy>();
-    }
-    if (!m_tool_output_policy)
-    {
-        m_tool_output_policy = std::make_shared<TruncateToolOutputPolicy>();
-    }
+    return Decided(std::move(result), RunStatus::BudgetExceeded, RunErrorCode::ModelCallLimit, "max steps exceeded");
 }
 
-AgentRunResult AgentRunner::RunTurn(const AgentProfile& profile, core::Conversation& conversation,
-                                    const std::string& user_input)
+namespace
 {
-    AgentRunResult result;
-    const std::size_t turn_start_size = conversation.messages.size();
-    bool turn_started = false;
 
+bool HasRequiredDependencies(const RunnerDependencies& dependencies)
+{
+    return dependencies.model && dependencies.tools && dependencies.tool_policy && dependencies.context_policy &&
+           dependencies.tool_output_policy && dependencies.tool_scheduler && dependencies.systems;
+}
+
+} // namespace
+
+AgentRunner::AgentRunner(RunnerDependencies dependencies)
+    : m_dependencies(std::move(dependencies))
+{
+    if (!HasRequiredDependencies(m_dependencies))
+    {
+        throw std::invalid_argument("runner requires explicit model, tools, policies, scheduler and systems");
+    }
+    // Snapshot registration so later host edits cannot change an active executor's capabilities.
+    m_dependencies.tools = std::make_shared<ToolRegistry>(*m_dependencies.tools);
+}
+
+std::optional<std::string> AgentRunner::ValidationError(const AgentProfile& profile) const
+{
+    const CompositionValidation validation = ValidateComposition(m_dependencies, profile);
+    if (validation.Ok())
+    {
+        return std::nullopt;
+    }
+    return DescribeCompositionIssues(validation);
+}
+
+std::shared_ptr<core::SystemRegistry> AgentRunner::SystemRegistry() const
+{
+    return m_dependencies.systems;
+}
+
+RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& workspace, const std::string& user_input,
+                                const RunContext& context)
+{
+    RunOutcome outcome;
+    SystemNotifier notifier(*m_dependencies.systems);
     try
     {
         if (user_input.empty())
         {
-            result.error = "empty input";
-            return result;
+            outcome = {RunStatus::Failed, RunErrorCode::InvalidInput, "empty input"};
         }
-        if (profile.max_steps <= 0)
+        else if (profile.max_steps <= 0)
         {
-            result.error = "max_steps must be positive";
-            return result;
+            outcome = {RunStatus::Failed, RunErrorCode::InvalidConfiguration, "max_steps must be positive"};
         }
-
-        if (m_tools != nullptr)
+        else if (context.Interruption() != RunErrorCode::None)
         {
-            for (const std::string& tool_name : profile.tool_names)
-            {
-                if (!m_tools->Has(tool_name))
-                {
-                    result.error = "unknown tool in profile: " + tool_name;
-                    return result;
-                }
-            }
+            outcome = Interrupted(RunOutcome{}, context.Interruption());
         }
-
-        NotifyTurnStart(m_systems.get());
-        turn_started = true;
-
-        if (!profile.system_prompt.empty() && !HasSystemMessage(conversation))
+        else if (context.session_id.empty() || context.run_id.empty())
         {
-            conversation.Append(core::ChatRole::System, profile.system_prompt);
+            outcome = {RunStatus::Failed, RunErrorCode::InvalidConfiguration, "run and session ids are required"};
         }
-
-        conversation.Append(core::ChatRole::User, user_input);
-
-        const std::vector<core::ToolSpec> tool_specs =
-            m_tools != nullptr ? m_tools->SpecsFor(profile.tool_names) : std::vector<core::ToolSpec>{};
-
-        ToolOutputBudget output_budget;
-
-        for (int step = 0; step < profile.max_steps; ++step)
+        else
         {
-            core::ChatRequest request;
-            request.model = profile.model;
-            request.temperature = profile.temperature;
-            request.max_tokens = profile.max_tokens;
-            request.tools = tool_specs;
-            request.messages = m_context_policy->Prepare(conversation.messages, profile.max_context_chars);
-
-            NotifyModelRequest(m_systems.get(), request);
-
-            core::ChatResponse response;
-            try
+            const CompositionValidation validation = ValidateComposition(m_dependencies, profile);
+            if (!validation.Ok())
             {
-                response = m_model.Chat(request);
+                outcome = {RunStatus::Failed, RunErrorCode::InvalidConfiguration,
+                           DescribeCompositionIssues(validation)};
             }
-            catch (const std::exception& error)
+            else
             {
-                result.error = std::string("model call failed: ") + error.what();
-                result.steps = step + 1;
-                NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
-                return result;
-            }
-            catch (...)
-            {
-                result.error = "model call failed";
-                result.steps = step + 1;
-                NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
-                return result;
-            }
-
-            NotifyModelResponse(m_systems.get(), response);
-
-            if (!response.ok)
-            {
-                result.error = response.error;
-                result.steps = step + 1;
-                NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
-                return result;
-            }
-
-            if (response.finish_reason == "length" || response.finish_reason == "content_filter" ||
-                response.finish_reason == "insufficient_system_resource")
-            {
-                result.error = "model response incomplete: " + response.finish_reason;
-                result.steps = step + 1;
-                NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
-                return result;
-            }
-
-            if (response.tool_calls.empty())
-            {
-                if (response.content.empty())
-                {
-                    result.error = "model returned empty response";
-                    result.steps = step + 1;
-                    NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
-                    return result;
-                }
-
-                core::ChatMessage assistant;
-                assistant.role = core::ChatRole::Assistant;
-                assistant.content = response.content;
-                conversation.Append(std::move(assistant));
-
-                result.ok = true;
-                result.content = response.content;
-                result.steps = step + 1;
-                NotifyTurnEnd(m_systems.get(), true, {}, result.steps);
-                return result;
-            }
-
-            core::ChatMessage assistant;
-            assistant.role = core::ChatRole::Assistant;
-            assistant.content = response.content;
-            assistant.tool_calls = response.tool_calls;
-            conversation.Append(std::move(assistant));
-
-            for (const core::ToolCall& call : response.tool_calls)
-            {
-                NotifyToolCall(m_systems.get(), call);
-
-                core::ToolResult tool_result;
-                std::string deny_reason;
-                if (m_tools == nullptr || !IsToolAllowed(profile, call.name))
-                {
-                    tool_result.ok = false;
-                    tool_result.error = "tool not allowed: " + call.name;
-                }
-                else if (m_tool_policy != nullptr && !m_tool_policy->Allow(call, deny_reason))
-                {
-                    tool_result.ok = false;
-                    tool_result.error = "tool denied by policy: " + deny_reason;
-                }
-                else
-                {
-                    try
-                    {
-                        tool_result = m_tools->Execute(call.name, call.arguments_json);
-                    }
-                    catch (const std::exception& error)
-                    {
-                        tool_result.ok = false;
-                        tool_result.error = std::string("tool execution failed: ") + error.what();
-                    }
-                    catch (...)
-                    {
-                        tool_result.ok = false;
-                        tool_result.error = "tool execution failed";
-                    }
-                }
-
-                NotifyToolResult(m_systems.get(), call, tool_result);
-
-                const std::string tool_content = tool_result.ok ? tool_result.content : tool_result.error;
-                core::ChatMessage tool_message;
-                tool_message.role = core::ChatRole::Tool;
-                tool_message.tool_call_id = call.id;
-                tool_message.content = m_tool_output_policy->Limit(call, tool_content, output_budget);
-                conversation.Append(std::move(tool_message));
+                outcome = RunSteps(m_dependencies, profile, workspace, context, notifier, outcome);
             }
         }
-
-        result.error = "max steps exceeded";
-        result.steps = profile.max_steps;
-        NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
-        return result;
     }
     catch (const std::exception& error)
     {
-        conversation.messages.resize(turn_start_size);
-        result.error = std::string("unhandled exception: ") + error.what();
-        result.steps = 0;
-        if (turn_started)
-        {
-            NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
-        }
-        return result;
+        outcome.status = RunStatus::Failed;
+        outcome.error_code = RunErrorCode::InternalError;
+        outcome.error = std::string("unhandled exception: ") + error.what();
     }
     catch (...)
     {
-        conversation.messages.resize(turn_start_size);
-        result.error = "unhandled unknown exception";
-        result.steps = 0;
-        if (turn_started)
-        {
-            NotifyTurnEnd(m_systems.get(), false, result.error, result.steps);
-        }
-        return result;
+        outcome.status = RunStatus::Failed;
+        outcome.error_code = RunErrorCode::InternalError;
+        outcome.error = "unhandled unknown exception";
     }
+
+    return outcome;
 }
 
 } // namespace agent::runtime

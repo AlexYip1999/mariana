@@ -1,7 +1,5 @@
 #include "agent/plugins/tools/workspace_path_policy.h"
 
-#include <algorithm>
-#include <cctype>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -16,14 +14,18 @@ std::string LowerAscii(std::string value)
 {
     for (char& character : value)
     {
-        character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+        if (character >= 'A' && character <= 'Z')
+        {
+            character = static_cast<char>(character + ('a' - 'A'));
+        }
     }
     return value;
 }
 
 bool IsSensitiveComponent(const std::filesystem::path& component)
 {
-    const std::string name = LowerAscii(component.string());
+    const std::u8string utf8_name = component.u8string();
+    const std::string name = LowerAscii(std::string(utf8_name.begin(), utf8_name.end()));
     if (name == ".env" || name.rfind(".env.", 0) == 0 || name == "config.local.json" || name == ".git" ||
         name == ".docker" || name == ".kube" || name == "id_rsa" || name == "id_ed25519" || name == "id_ecdsa" ||
         name == ".git-credentials" || name == ".netrc" || name == ".npmrc" || name == ".pypirc" || name == ".htpasswd")

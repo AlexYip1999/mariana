@@ -1,8 +1,82 @@
-# Agent 循环（A2）设计草案
+# Agent 循环与运行时架构
 
-- 状态：草案，待评审
+- 状态：当前运行时契约已实现，后半部分保留 A2 原始设计草案
 - 目标版本：A2
 - 关联：`ChatModel`、CLI host、DeepSeek Chat Completions
+- 完整对象模型与生命周期见 [运行时架构](runtime-architecture.md)
+
+## 当前运行时契约（已实现）
+
+以下是当前代码的装配与并发契约；后面的 A2 草案保留用于解释设计演进，旧接口示例不再作为接入依据。
+
+```mermaid
+flowchart TD
+    Host[Host 组合根] --> Agent
+    Agent --> Session[AgentSession：配置、历史、执行记录]
+    Session --> Runner[AgentRunner：循环与统一收尾]
+    Runner --> Model[ChatModel → HttpTransport]
+    Runner --> Dispatcher[ToolDispatcher：权限、预算、去重]
+    Dispatcher --> Scheduler[ToolScheduler → Tool]
+    Runner --> Systems[SystemRegistry：AgentSystem 回调]
+    Dispatcher --> Systems
+```
+
+> 事件队列（`RunEvent` / `EventDispatcher` / UI 线程投递）本阶段不实现，留到 Router/Worker 或第二个宿主出现后再设计。
+
+### 配置与依赖所有权
+
+- `AgentDescriptor::default_profile` 是不可变的创建默认值；唯一可变运行配置由 `AgentSession` 持有。`Agent::Profile()`、`History()` 和 `Session::Records()` 返回快照，外部不能通过引用修改内部状态。
+- `SetProfile` 同步更新历史中的 System 消息；`Reconfigure(profile, executor)` 在空闲时一起切换配置和执行器。`Agent::Dependencies()` 返回当前执行器快照，不保留过期执行器。
+- `RunnerDependencies` 必须显式传入 model、tools、tool policy、context policy、output policy、scheduler、systems，缺失时构造失败。默认策略只在 host 组合根选择，Runner 不再读取 `ServiceRegistry`。
+- Session 拥有 executor，Runner 拥有依赖，`OpenAiChatModel` 拥有 transport，全部使用 `shared_ptr`。`ServiceRegistry` 也持有父 registry 的共享所有权；该可选宿主注册表须在发布到工作线程前完成配置，不支持并发修改。
+- Runner 构造时复制工具注册表，注册能力不会随 host 后续编辑改变。切换工作区通过新建执行器并 `Reconfigure` 完成。共享的 model、transport、tool 和自定义 policy 实例本身必须支持并发，或由 host 为每个会话创建独立实例。
+
+### RunContext 与 CallContext
+
+每个已接受的 Send 创建一个 runtime `RunContext`，携带 `session_id`、唯一 `run_id`、`core::CallContext`（取消 + deadline）及预算，贯穿 model、tool、scheduler、observer。一次 Turn 内多次模型请求共享截止时间，不重新计时。
+
+| 字段 | 默认值 | 语义 |
+|---|---|---|
+| `max_steps` | 8 | 本轮最多模型调用次数 |
+| `turn_timeout_ms` | 120000 | 本轮总耗时预算，包含所有模型和工具调用 |
+| `max_tool_calls` | 64 | 本轮工具调用尝试次数，包含拒绝和缓存重放；0 禁止执行 |
+| `max_tool_output_bytes` | 32768 | 工具正文累计字节预算，含重放；固定截断提示不计入正文预算 |
+| `timeout_ms`（model 配置） | 30000 | 单次 HTTP 时限，实际取它与本轮剩余时间的较小值 |
+
+`Send(input, RunOptions)` 可指定取消信号和本次超时；`Send(input, stop_token)` 仍可使用。工具/自定义 scheduler 必须协作检查 context：框架会在调用边界检查，但不能强制中断不配合的同步代码。
+
+结果使用 `RunStatus::{Completed, Cancelled, Failed, BudgetExceeded, Busy}` 与 `RunErrorCode`；`ChatResponse` / `ToolResult` 只携带 `core::CallError`。调用者检查 `result.Ok()` / `status` / `error_code`，不需要匹配错误文本。`AgentRunResult` 携带 `session_id` / `run_id`。
+
+### 工具执行与统一收尾
+
+`ToolDispatcher` 负责允许列表、策略检查、scheduler 调度、输出限制和操作记录。一次 Turn 中同一 tool call ID 与相同名称/原始参数字符串只执行一次，后续复用结果并继续消耗调用和输出预算；同一 ID 携带不同参数视为协议错误。缓存仅在本轮生效，不承诺跨轮、跨进程或不同 ID 的 exactly-once。
+
+`ToolExecutionRecord` 在进入 scheduler 前创建，`execution_started` 表示已提交调度、可能产生副作用；它不承诺操作完成。记录包含工具结果和错误，保存在返回值与 `Session::Records()` 中，独立于对话历史。重放不增加实际执行记录，`tool_attempts` 仍增加。
+
+| 结束原因 | 对话历史 | 工具记录 |
+|---|---|---|
+| 成功 | 提交完整本轮 | 保留 |
+| 取消、总截止时间、运行时内部异常 | 恢复本轮开始前的历史 | 保留已经登记的操作 |
+| 模型失败、响应不完整、步骤/工具/输出预算耗尽 | 保留用户输入和完整工具批次，移除未完成的 assistant/tool 批次 | 保留 |
+| 输入或配置检查失败 | 不开始本轮、不修改历史 | 无工具执行 |
+| 同会话 Busy | 不开始本轮、不修改历史 | 不新增记录 |
+
+`AgentSession` 的 `TurnTransaction` 生成最终结果并处理历史；`AgentExecutor` 只写 `TurnWorkspace` 并返回 `RunOutcome`。`ExecuteTurn` 统一事务、TurnStarted/TurnFinished 与 executor 调用顺序；观察者异常被通知层隔离，不改变执行结果。事件总线/异步 UI 队列留到宿主层设计。
+
+取消/回滚历史不会撤销已经发生的工具副作用，也不会自动重试。本轮操作记录目前仅在内存中保存，`ClearHistory` 不清除记录；持久化 SessionStore、跨进程幂等恢复与 Memory 属于后续范围。
+
+### 并发、观察者和宿主线程
+
+- 同一 Session 同时只接受一个 Send；并发调用和同步回调重入均立即返回 `Busy`，`ClearHistory` / `SetProfile` / `Reconfigure` 返回 false。运行使用配置和历史快照，读状态不会等待网络调用。
+- 不同 Session 可并行。每个 Session 必须使用独立 Runner / `SystemRegistry` / metrics / tracer；底层无状态、线程安全依赖可以共享。
+- CLI 在会话作用域创建 metrics、tracer 和 UI 上下文；host 注册表只提供可共享命令等服务。`MetricsCollector::Snapshot()` 加锁返回副本。
+- `AgentSystem` 阶段回调仍在执行线程同步通知；`AgentRunner` 隔离观察者异常。宿主 UI 线程事件队列本阶段不实现。
+- `ToolScheduler` 是需要主线程工具的调度接入点，默认实现直接执行；宿主实现须在等待期间处理取消/截止时间并避免主线程等待自身。框架未引入后台线程池，`Send` 仍是同步 API。
+- 直接调用低层 `AgentExecutor::RunTurn(profile, workspace, input, context)` 的宿主须自行保证 `TurnWorkspace` 串行访问；推荐通过 Session 使用以上约束。
+
+### 接口迁移
+
+`descriptor.profile` 改为 `descriptor.default_profile`；`AgentRunner(model, services)` 改为 `AgentRunner(RunnerDependencies)`；Session/Model 构造接收拥有所有权的 `shared_ptr`。`ChatRequest::stop_token` 迁移到 `call.stop_token`，自定义 `Tool::Execute` 接收 `const CallContext&`，`AgentExecutor::RunTurn` 接收 runtime `RunContext`；运行结果的 `.ok` 改为 `.Ok()`。`AgentSystem` 阶段回调保持不变，观察者异常被隔离。
 
 ## 1. 背景
 
@@ -223,7 +297,7 @@ class Tracer : public AgentSystem
 };
 ```
 
-A2 先提供 `NullTracer`；A2.2 再加文件 trace（JSONL，写入 `traces/`）。
+A2 已提供 `NullTracer` 和文件 trace（JSONL，默认写入 `traces/`），并支持 usage 聚合。
 
 多个 system 用 `SystemRegistry` 注册：
 
@@ -247,49 +321,45 @@ class AgentExecutor
   public:
     virtual ~AgentExecutor() = default;
 
-    virtual AgentRunResult RunTurn(const AgentProfile& profile, Conversation& conversation,
-                                   const std::string& user_input) = 0;
+    virtual RunOutcome RunTurn(const AgentProfile& profile, TurnWorkspace& workspace,
+                               const std::string& user_input, const RunContext& context) = 0;
+    virtual std::shared_ptr<core::SystemRegistry> SystemRegistry() const { return nullptr; }
 };
 
 class AgentRunner : public AgentExecutor
 {
   public:
-    AgentRunner(ChatModel& model, ToolRegistry* tools, SystemRegistry* systems = nullptr);
+    explicit AgentRunner(RunnerDependencies dependencies);
 
-    AgentRunResult RunTurn(const AgentProfile& profile, Conversation& conversation,
-                           const std::string& user_input) override;
+    RunOutcome RunTurn(const AgentProfile& profile, TurnWorkspace& workspace,
+                       const std::string& user_input, const RunContext& context) override;
+    std::shared_ptr<core::SystemRegistry> SystemRegistry() const override;
 };
 ```
 
 ### 5.1 单轮流程
 
 ```text
-1. 校验 profile.tool_names 都存在于 ToolRegistry（无 ToolRegistry 时忽略）
-2. SystemRegistry::OnTurnStart
-3. 若 Conversation 没有 System 消息且 profile.system_prompt 非空 → 追加 System
-4. 把 user_input 追加为 User 消息
-5. 构造 ChatRequest：
-   - model / temperature / max_tokens 由 AgentProfile 提供
-   - messages = conversation.messages
-   - tools = 按 profile.tool_names 从 ToolRegistry 取 SpecsFor()
-6. SystemRegistry::OnModelRequest
-7. response = model.Chat(request)（异常转错误结果）
-8. SystemRegistry::OnModelResponse
-9. 若 !ok → 失败，保留已追加消息
-10. 若 finish_reason ∈ {length, content_filter, insufficient_system_resource} → 失败
-11. 若 tool_calls 为空：
-    - content 为空 → 失败，不追加 assistant
-    - content 非空 → 追加 assistant，成功返回
-12. 否则追加 assistant(content + tool_calls)
-13. 对每个 tool_call：
-    - 校验 tool.name 在 profile.tool_names 内；否则生成 tool not allowed 结果
-    - SystemRegistry::OnToolCall
-    - 执行工具（异常转错误结果）
-    - SystemRegistry::OnToolResult
-    - 追加 role=Tool、tool_call_id、content/error 的消息
-14. 达到 max_steps → 失败，保留已完成消息
-15. SystemRegistry::OnTurnEnd(ok, error, steps)
+1. Session 预检（空输入/预算/已取消），失败不开始本轮
+2. Session snapshot profile/history，TurnTransaction.Start
+3. Session 发出 TurnStarted(TurnEvent)
+4. Runner 校验依赖/tool_names，进入模型 ↔ 工具循环
+5. 模型/工具事件由 Runner 发出；消息写入 TurnWorkspace
+6. Runner 返回 RunOutcome
+7. Session 根据 RunOutcome commit/rollback
+8. Session 发出 TurnFinished(TurnEvent)
 ```
+
+Runner 内循环：
+
+1. 检查 `RunContext::Interruption` 和 budget；
+2. 构造 `ChatRequest`，`messages` 由 `ContextPolicy` 从 workspace conversation 生成；
+3. `ChatModel::Chat`，异常转 `CallError::ModelFailure`；
+4. 检查 finish_reason / 空响应；
+5. 无 tool_calls 且 content 非空 → 追加 assistant，返回 Completed；
+6. 否则追加 assistant(tool_calls)，逐个交给 `ToolDispatcher`；
+7. 工具结果回填 `role=Tool`，继续下一次模型调用；
+8. 达到 max_steps → `RunErrorCode::ModelCallLimit`。
 
 ### 5.2 终止条件
 
@@ -321,8 +391,9 @@ class AgentExecutor
   public:
     virtual ~AgentExecutor() = default;
 
-    virtual AgentRunResult RunTurn(const AgentProfile& profile, Conversation& conversation,
-                                   const std::string& user_input) = 0;
+    virtual RunOutcome RunTurn(const AgentProfile& profile, TurnWorkspace& workspace,
+                               const std::string& user_input, const RunContext& context) = 0;
+    virtual std::shared_ptr<core::SystemRegistry> SystemRegistry() const { return nullptr; }
 };
 ```
 
@@ -500,7 +571,7 @@ MCP server
 }
 ```
 
-A2 开工前先做一次真实 API 验证（见 10.3）。
+A2 开工前先做一次真实 API 验证（见 §10.2）。
 
 ## 7. 错误处理
 
@@ -601,7 +672,7 @@ services.Set<SystemRegistry>(systems);
 | MCP 远程工具 | 每个 MCP tool 对应一个 `McpTool`；McpClient/连接管理放 `source/plugins/mcp` |
 | 插件系统 | `PluginManifest` + `PluginKind` + 动态 loader；`source/plugins` |
 | 服务/插件实例 | `ServiceRegistry` + 稳定 service id；agent/runtime 层 |
-| Agent 组合根 | `AgentRuntime` + `AgentServices`，宿主负责组装 |
+| Agent 组合根 | `AgentRuntime` + `AgentDependencies`，宿主负责组装 |
 | 异步 ReAct | `AgentRunner::Step()` 与循环驱动分离，未来用事件队列调用 Step |
 | Router / Worker | `Conversation` + `AgentExecutor` 可实例化多个，Router 负责分配 |
 | 多会话 | Conversation 可序列化、带 session_id |
@@ -727,26 +798,23 @@ class ServiceRegistry
 
 | 依赖类型 | 推荐方式 |
 |---|---|
-| 必需依赖（model、tools、executor） | 构造函数/AgentServices 注入 |
+| 必需依赖（model、tools、executor） | 构造函数/AgentDependencies 注入 |
 | 可选环境服务（world、logger、event） | `ServiceRegistry::Get` |
 | 插件之间强依赖 | manifest + 加载顺序，或显式注入 |
 
 不要在工具/插件内部到处 `GetComponent`，否则依赖关系会变成隐式的，测试和初始化顺序都会变难。
 
-### 12.6 Agent 与 AgentServices
+### 12.6 Agent 与 AgentDependencies
 
 当前实现：
 
 ```cpp
-struct AgentServices
-{
-    std::shared_ptr<ServiceRegistry> services;
-    std::shared_ptr<AgentExecutor> executor;
-};
+using AgentScope = ServiceRegistry;
 
-struct AgentId
+struct AgentDependencies
 {
-    std::string value;
+    std::shared_ptr<AgentScope> services;
+    std::shared_ptr<AgentExecutor> executor;
 };
 
 struct AgentDescriptor
@@ -754,40 +822,44 @@ struct AgentDescriptor
     AgentId id;
     std::string name;
     std::string version;
-    AgentProfile profile;
+    AgentProfile default_profile;
     std::vector<std::string> capabilities;
 };
 
 class Agent
 {
   public:
-    Agent(AgentDescriptor descriptor, AgentServices services);
+    Agent(AgentDescriptor descriptor, AgentDependencies dependencies, std::string session_id = {});
 
-    AgentRunResult Send(const std::string& input);
-    void ClearHistory();
+    AgentRunResult Send(const std::string& input, const RunOptions& options = {});
+    AgentRunResult Send(const std::string& input, std::stop_token stop_token);
+    bool ClearHistory();
 
-    AgentSession& Session();
-    const core::Conversation& History() const;
+    const AgentSession& Session() const;
+    const std::string& SessionId() const;
+    core::Conversation History() const;
 
     const AgentDescriptor& Descriptor() const;
-    const AgentProfile& Profile() const;
-    const AgentServices& Services() const;
+    const AgentId& Id() const;
+    AgentProfile Profile() const;
+    AgentDependencies Dependencies() const;
 
-    void SetProfile(AgentProfile profile);
+    bool SetProfile(AgentProfile profile);
+    bool Reconfigure(AgentProfile profile, std::shared_ptr<AgentExecutor> executor);
 
   private:
-    AgentDescriptor m_descriptor;
-    AgentServices m_services;
+    const AgentDescriptor m_descriptor;
+    std::shared_ptr<AgentScope> m_scope;
     AgentSession m_session;
 };
 ```
 
-- Host 创建 Host scope registry；
-- 每个 Agent 创建自己的 child `ServiceRegistry`；
-- Agent 持有自己的 `AgentServices`（Agent scope registry + executor）；
+- Host 创建 HostScope；
+- 每个 Agent 持有自己的 child `ServiceRegistry`（AgentScope）；
+- AgentScope 与 Executor 必须使用同一个 `SystemRegistry`；Agent 构造时校验/采纳；
 - `AgentDescriptor` 保存身份/版本/能力快照；
-- `AgentSession` 只负责会话状态；
-- `AgentRunner` 只负责一次 Turn 的执行策略；
+- `AgentSession` 持有 profile、history、executor、records、TurnTransaction、SystemRegistry；
+- `AgentRunner` 只负责一次 Turn 的执行策略；`TurnTransaction` 归 Session；
 - 一 NPC 一 Agent 是宿主组装方式；
 - 多 Agent 编排（Router/Orchestrator）不放进 Agent；
 - `AgentRuntime` 仍是未来多 Agent 的收口方案，不在当前实现。
@@ -797,7 +869,7 @@ class Agent
 外层循环（交互方式）与内层执行策略已经分层：
 
 ```text
-外层：host 循环（RunInteractive）
+外层：host 循环（RunCliLoop）
   启动参数只保留 --help/--version/--config
     ↓
 中层：Agent::Send(turn)
@@ -809,17 +881,17 @@ class Agent
 
 当前实现：
 
-- Host 组装 `AgentDescriptor` + `Agent`，`RunInteractive` 直接调用 `Agent::Send`；
+- Host 通过 HostServices / AgentFactory 组装 `AgentDescriptor` + `Agent`，`RunCliLoop` 调用 `Agent::Send`；
 - `AgentSession` 构造时注入 `AgentExecutor&`，不依赖具体 `AgentRunner`；
 - `AgentExecutor` 是接口，`AgentRunner` 是默认 ReAct 实现；
 - 没有 `SessionDriver` 抽象：它没有实现/调用/测试，已移除，等第二个宿主或 CLI 命令抽象落地后再设计。
 
 组件化约束：
 
-- `Agent` 持有 `AgentDescriptor` + `AgentSession`；`AgentSession` 只持有 `AgentProfile` + `AgentExecutor&` + `Conversation`；
-- model/tools/systems 由组合根构造 Executor 时注入，不进入 Session；
+- `Agent` 持有 `AgentDescriptor` + `AgentSession`；`AgentSession` 持有 profile、executor、conversation、records、TurnTransaction 和 Session 级 `SystemRegistry`；
+- model/tools 由组合根构造 Executor 时注入；Session 只持有 systems/executor，不查全局 registry；
 - 可选服务通过 `ServiceRegistry` 在组合根解析，再注入 Executor；
-- turn 级事件由 `AgentSystem::OnTurnStart/OnTurnEnd` 发出，step/tool 事件由 Executor 发出；
+- turn 级事件由 Session 发出（start 在 executor 前，end 在 commit/rollback 后），step/tool 事件由 Executor 发出；
 - 新增执行器只需实现 `AgentExecutor`，不改 CLI/UE host。
 
 ### 12.8 实施顺序
@@ -848,17 +920,17 @@ class Agent
 - 必需依赖优先构造注入，ServiceRegistry 只用于可选服务；
 - 方向与 DeepSeek 的插件化 + 编排/执行分离一致。
 
-### 待确认决策
+### 待确认决策（部分已解决）
 
-1. `AgentExecutor` 接口在 A2 就引入，还是先写 `AgentRunner` 后续再抽；
-2. `AgentRunner` 放在 `source/core` 还是新增 `source/agent`；
-3. `Tool` 接口放 core（JSON 字符串）是否合适，还是放到独立的 tools 接口库；
-4. 第一版是否允许一次响应多个 `tool_calls` 并行执行（建议先串行）；
-5. `AgentProfile` 是否包含 model/temperature，还是复用 adapter 配置；
-6. `ContextProvider` 的位置与数据类型（JSON 字符串 vs 强类型结构）；
-7. trace 文件格式与落盘位置；
-8. 启动参数与交互命令的边界（启动只保留 bootstrap，其他用命令）。
-9. Flow DSL 从什么时候开始设计（建议 A3 之后）；
-10. ServiceRegistry 放 `source/agent` 还是独立 `source/plugins/runtime`；
-11. 服务 ID 用字符串/GUID/`std::type_index`，动态插件如何保持 ABI 稳定；
-12. PluginManifest 的权限模型与沙箱能力何时引入。
+1. `AgentExecutor` 接口在 A2 就引入，还是先写 `AgentRunner` 后续再抽；（已解决：接口已引入）
+2. `AgentRunner` 放在 `source/core` 还是新增 `source/agent`；（已解决：`source/runtime`）
+3. `Tool` 接口放 core（JSON 字符串）是否合适，还是放到独立的 tools 接口库；（已解决：core 只放协议，治理元数据在 runtime）
+4. 第一版是否允许一次响应多个 `tool_calls` 并行执行（建议先串行）；（已解决：先串行）
+5. `AgentProfile` 是否包含 model/temperature，还是复用 adapter 配置；（已解决：profile 持有）
+6. `ContextProvider` 的位置与数据类型（JSON 字符串 vs 强类型结构）；（仍开放，F1）
+7. trace 文件格式与落盘位置；（已解决：JSONL + traces/）
+8. 启动参数与交互命令的边界（启动只保留 bootstrap，其他用命令）；（已解决）
+9. Flow DSL 从什么时候开始设计（建议 A3 之后）；（仍冻结）
+10. ServiceRegistry 放 `source/agent` 还是独立 `source/plugins/runtime`；（已解决：runtime）
+11. 服务 ID 用字符串/GUID/`std::type_index`，动态插件如何保持 ABI 稳定；（仍开放，F4）
+12. PluginManifest 的权限模型与沙箱能力何时引入。（仍冻结，F4）

@@ -1,8 +1,13 @@
-# agent-core
+# 马里亚纳之心（Mariana Heart）
 
-跨平台、宿主无关的 Agent 核心。同一份 core 计划支撑 CLI、UE 编辑器/运行时、服务端等宿主；UE 接入只是宿主适配阶段（阶段 B），不是起点。
+跨平台、宿主无关的 Agent 运行时。同一份 core 计划支撑 CLI、UE 编辑器/运行时、服务端等宿主；UE 接入只是宿主适配阶段（阶段 B），不是起点。
 
-**当前状态：A2（Agent Loop + 工具链路）** —— Windows 已接入临时 WinHTTP 传输；已实现 AgentExecutor/AgentRunner、ToolRegistry、ReAct 工具循环、read_file、metrics、CLI 交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI。
+仓库：[AlexYip1999/mariana](https://github.com/AlexYip1999/mariana)
+本地目录为 `agent-core`；代码命名空间暂用 `agent::`，后续统一改名。
+
+**当前状态：A2.5（F0 运行时收口）已完成，A3（F1）进行中** —— Windows 已接入临时 WinHTTP 传输；已实现 `Agent`/`AgentSession`/`AgentRunner`、scoped `ServiceRegistry`、ReAct 工具循环、`read_file`、取消/预算/并发硬化、Turn 事务、结构化 TurnEvent、ToolDescriptor、组合校验、CallError/RunErrorCode 分层、HostServices/AgentFactory/RunLoop、metrics、trace、CLI `CommandRegistry` 交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI。
+
+仓库里**还没有 UE 插件**；`hosts/unreal/` 只是规划。
 
 ## 目录
 
@@ -13,7 +18,7 @@
 | `source/integrations/` | 外部集成：模型、传输、存储等平台/协议实现 |
 | `source/integrations/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
 | `source/integrations/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 integrations |
-| `source/runtime/` | 通用 Agent 运行时：`Agent`（身份 + 配置 + 会话 + AgentServices）、scoped `ServiceRegistry`、`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`、`ToolRegistry`、`ToolPolicy`/`ContextPolicy`/`ToolOutputPolicy` |
+| `source/runtime/` | 通用 Agent 运行时：`Agent`（身份 + `AgentScope` + 会话 + `AgentDependencies`）、scoped `ServiceRegistry`、`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`、`ExecuteTurn`、`RunContext`、`TurnTransaction`、`TurnWorkspace`、`RunOutcome`、`TurnEvent`、`ToolDispatcher`、`ToolDescriptor`、`ValidateComposition`、`ToolRegistry`、`ToolPolicy`/`ContextPolicy`/`ToolOutputPolicy` |
 | `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（WorkspacePathPolicy、句柄级复核、敏感文件拒绝、UTF-8 校验、大小限制） |
 | `source/plugins/traces/` | JSONL trace 插件：默认开启，记录 turn/model/tool/usage，内容截断与 key 脱敏；usage 聚合与 trace viewer |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
@@ -22,8 +27,13 @@
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
 | `third_party/` | 单头依赖（nlohmann/json、doctest） |
 | `.dsh/skills/` | 项目级 DSH skill（`cpp-code-style` 代码规范） |
-| `docs/learning/` | 边做边学笔记（U0…，模板见 README） |
 | `eval/` | 评测任务与脚本（A3 起） |
+
+## 运行时架构
+
+运行配置由 Session 单独持有，Runner 通过 `RunnerDependencies` 显式装配；`RunContext` 贯穿取消、截止时间和预算。`TurnTransaction` 由 Session 持有并统一处理历史提交/回滚；`TurnEvent` 在 commit/rollback 后由 Session 发布，`SystemNotifier` 在 runtime 层快照分发并隔离观察者异常。`ToolDispatcher` 处理策略、预算、去重、重放事件和执行记录。同一 Session 拒绝并发和重入，不同 Session 可并行；metrics / trace 由宿主按会话创建。宿主事件队列/UI 线程投递留到后续阶段。
+
+完整对象模型、生命周期和线程契约见 [运行时架构](docs/runtime-architecture.md)。
 
 ## 构建
 
@@ -71,8 +81,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 
 - API key 不写进仓库 / 配置文件 / 日志；CLI 只从环境变量 `DEEPSEEK_API_KEY` 读取。
 - 配置文件里的 `api_key` / `key` / `token` 字段会被解析器拒绝。
-- `endpoint` 必须是 `https://`（仅 localhost 允许 http）。
-- 自动加载的 cwd 配置若修改 `endpoint` / `api_key_env`，默认拒绝；需要时显式加 `--trust-workspace-config`。
+- `endpoint` 必须是 `https://`；仅主机严格匹配 `localhost`、`127.0.0.1`、`[::1]` 时允许 HTTP。
+- 自动加载的 cwd 配置若修改 `endpoint` / `api_key_env` / `model` / `system_prompt`，默认拒绝；需要时用 `--config <path>` 显式指定可信配置。
+- HTTP 不自动跟随重定向，避免把 API key 和正文转发到其他地址；请求有总时限，响应默认限制为 8 MiB。
 - 工具默认只能读 workspace 内的文本文件；拒绝 `.env`、`config.local.json`、`.git`、私钥等敏感文件。
 - 本地持久化请用 OS 凭据库，不要自研加密；UE / 打包客户端不要内置长期 key，走代理网关。
 - 详细威胁模型见 [`docs/security.md`](docs/security.md)。
@@ -84,24 +95,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 - 内置默认值兜底；`--config <path>` 显式指定时只加载该文件；
 - `tool_names` 为空数组表示禁用工具；非空名字必须存在于 ToolRegistry（CLI 当前只注册 `read_file`）；
 - `max_context_chars` 控制发送给模型的 conversation 字符预算（0 = 不裁剪，默认 120000）；
+- `timeout_ms` 是每次模型 HTTP 请求的总时限（默认 30000 ms，必须为正整数），包含响应正文接收；
+- `turn_timeout_ms` 限制整轮总耗时（默认 120000 ms）；`max_tool_calls` / `max_tool_output_bytes` 限制工具尝试次数和正文总输出（默认 64 / 32768）；
+- runtime 宿主可向 `Agent::Send(input, stop_token)` 传入取消信号，贯穿模型、工具调度和 HTTP；CLI 当前没有交互式取消命令；
 - trace 插件默认开启；`/trace` 查看当前 trace，`/trace show <file>` 查看指定 trace；
 - `/stats today|all` 聚合 trace usage；
 
 ## 设计文档
 
-- [Agent 循环（A2）设计](docs/agent-loop-design.md)
+- [框架设计](docs/framework.md)
+- [Agent 循环设计](docs/agent-loop-design.md)
+- [运行时架构](docs/runtime-architecture.md)
 - [安全与密钥管理](docs/security.md)
 
 ## 下一步
 
-- 真实 API 联调：`$env:DEEPSEEK_API_KEY = "..."`，然后 `agent-cli "读取 README.md 并总结"`；
-- 补 file tracer / usage 持久化（A2.2）；
+- 真实 API 联调：设置 `DEEPSEEK_API_KEY` 后启动 `agent-cli`，在交互提示符输入“读取 README.md 并总结”；
+- file tracer / usage 持久化已实现；继续验证真实服务下的错误处理与使用体验；
 - 跨平台正式实现：把 `WinHttpTransport` 替换为 libcurl（接口不变，UE 宿主仍用 FHttpModule）；
-- 之后进入 A3：ContextProvider、Memory、Eval。
+- 之后进入 F1/A3：ContextProvider、Memory、Eval。
 
 CLI 的配置与用法见 [`source/hosts/cli/README.md`](source/hosts/cli/README.md)，共享默认见 [`resources/config.json`](resources/config.json)。
-
-学习与构建节奏见工作区文档：`../Agent项目-学习与构建计划.md`、`../Agent项目-实施路径.md`。
 
 ## 第三方
 

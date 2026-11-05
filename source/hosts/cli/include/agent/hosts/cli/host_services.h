@@ -1,0 +1,62 @@
+#pragma once
+
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
+
+#include "agent/core/chat_model.h"
+#include "agent/core/system_registry.h"
+#include "agent/hosts/cli/cli_command.h"
+#include "agent/hosts/cli/cli_config.h"
+#include "agent/runtime/service_registry.h"
+
+namespace agent::plugins::metrics
+{
+class MetricsCollector;
+}
+
+namespace agent::plugins::traces
+{
+class FileTracer;
+}
+
+namespace agent::transport
+{
+class HttpTransport;
+}
+
+namespace agent::hosts::cli
+{
+
+class ToolCatalog;
+
+/// Host 组合阶段需要的平台/配置输入。
+struct HostServicesConfig
+{
+    CliConfig config;
+    std::filesystem::path workspace;
+    std::string session_id;
+    std::string api_key;
+    std::shared_ptr<CommandRegistry> commands;
+    std::shared_ptr<ToolCatalog> tool_catalog;
+    std::shared_ptr<transport::HttpTransport> transport;
+};
+
+/// Host 共享服务与会话作用域；不包含 Agent 和 executor。
+struct HostServices
+{
+    std::shared_ptr<core::ChatModel> model;
+    std::shared_ptr<runtime::ServiceRegistry> host_scope;
+    std::shared_ptr<runtime::ServiceRegistry> session_scope;
+    std::shared_ptr<core::SystemRegistry> systems;
+    std::shared_ptr<plugins::metrics::MetricsCollector> metrics;
+    std::shared_ptr<plugins::traces::FileTracer> tracer;
+    std::shared_ptr<CliContext> context;
+    std::shared_ptr<ToolCatalog> tool_catalog;
+};
+
+/// 组装 model / metrics / tracer / systems / scoped registry / CliContext。
+std::optional<HostServices> BuildHostServices(const HostServicesConfig& input, std::string& error);
+
+} // namespace agent::hosts::cli

@@ -18,3 +18,5 @@ target_link_libraries(agent_traces
 )
 
 target_compile_features(agent_traces PUBLIC cxx_std_20)
+
+set_target_properties(agent_traces PROPERTIES FOLDER "Source/Plugins/Traces")

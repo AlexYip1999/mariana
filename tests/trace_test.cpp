@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -13,6 +14,121 @@
 #include "agent/plugins/traces/file_tracer.h"
 #include "agent/plugins/traces/trace_usage.h"
 #include "agent/plugins/traces/trace_viewer.h"
+
+namespace
+{
+
+class MemoryTraceSink final : public agent::plugins::traces::TraceSink
+{
+  public:
+    bool IsOpen() const override
+    {
+        return true;
+    }
+
+    void Write(const std::string& line) override
+    {
+        events.push_back(nlohmann::json::parse(line));
+    }
+
+    void Close() override {}
+
+    std::vector<nlohmann::json> events;
+};
+
+} // namespace
+
+TEST_CASE("trace truncation preserves Chinese and emoji at every byte boundary")
+{
+    const std::string characters[] = {"中", "😀"};
+    for (const std::string& character : characters)
+    {
+        for (std::size_t prefix = 0; prefix < character.size(); ++prefix)
+        {
+            auto sink = std::make_shared<MemoryTraceSink>();
+            agent::plugins::traces::FileTracer tracer(sink);
+            std::string content(prefix, 'a');
+            for (int index = 0; index < 700; ++index)
+            {
+                content += character;
+            }
+            agent::core::ChatRequest request;
+            request.messages.push_back({agent::core::ChatRole::User, content});
+            agent::core::ChatResponse response;
+            response.content = content;
+            agent::core::ToolResult tool_result;
+            tool_result.content = content;
+            tracer.OnTurnStart();
+            CHECK_NOTHROW(tracer.OnModelRequest(request));
+            CHECK_NOTHROW(tracer.OnModelResponse(response));
+            CHECK_NOTHROW(tracer.OnToolResult({}, tool_result));
+            CHECK_NOTHROW(tracer.OnTurnEnd(false, content, 1));
+            REQUIRE(sink->events.size() == 5);
+            const std::size_t kept = prefix + (2000 - prefix) / character.size() * character.size();
+            const std::string expected = content.substr(0, kept) + "... [truncated]";
+            CHECK(sink->events[1]["last_content"] == expected);
+            CHECK(sink->events[2]["content"] == expected);
+            CHECK(sink->events[3]["content"] == expected);
+            CHECK(sink->events[4]["error"] == expected);
+        }
+    }
+}
+
+TEST_CASE("file tracer correlates structured turn events with session and run ids")
+{
+    auto sink = std::make_shared<MemoryTraceSink>();
+    agent::plugins::traces::FileTracer tracer(sink);
+
+    agent::core::TurnEvent start;
+    start.session_id = "session-1";
+    start.run_id = "run-1";
+    tracer.OnTurnStarted(start);
+
+    agent::core::TurnEvent end;
+    end.session_id = "session-1";
+    end.run_id = "run-1";
+    end.status = "Failed";
+    end.error_code = "ModelFailure";
+    end.error = "boom";
+    end.steps = 2;
+    end.tool_attempts = 1;
+    end.replayed = true;
+    tracer.OnTurnEnded(end);
+
+    REQUIRE(sink->events.size() == 2);
+    CHECK(sink->events[0]["event"] == "turn_start");
+    CHECK(sink->events[0]["session_id"] == "session-1");
+    CHECK(sink->events[0]["run_id"] == "run-1");
+    CHECK(sink->events[1]["event"] == "turn_end");
+    CHECK(sink->events[1]["session_id"] == "session-1");
+    CHECK(sink->events[1]["run_id"] == "run-1");
+    CHECK(sink->events[1]["status"] == "Failed");
+    CHECK(sink->events[1]["error_code"] == "ModelFailure");
+    CHECK(sink->events[1]["tool_attempts"] == 1);
+    CHECK(sink->events[1]["replayed"] == true);
+}
+
+TEST_CASE("file tracer marks replayed tool results")
+{
+    auto sink = std::make_shared<MemoryTraceSink>();
+    agent::plugins::traces::FileTracer tracer(sink);
+
+    agent::core::ToolCall call;
+    call.id = "call_1";
+    call.name = "echo";
+    call.arguments_json = "{}";
+    agent::core::ToolResult result;
+    result.ok = true;
+    result.content = "cached";
+
+    tracer.OnTurnStart();
+    tracer.OnToolReplayed(call, result);
+
+    REQUIRE(sink->events.size() == 2);
+    CHECK(sink->events[1]["event"] == "tool_result");
+    CHECK(sink->events[1]["replayed"] == true);
+    CHECK(sink->events[1]["content"] == "cached");
+}
 
 TEST_CASE("file tracer writes redacted jsonl events")
 {

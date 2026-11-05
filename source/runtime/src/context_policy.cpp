@@ -56,25 +56,25 @@ std::vector<core::ChatMessage> KeepRecentTurnsPolicy::Prepare(const std::vector<
         ++system_end;
     }
 
-    const std::size_t system_chars = EstimateMessagesChars(messages, 0) - EstimateMessagesChars(messages, system_end);
+    std::size_t remaining_chars = EstimateMessagesChars(messages, 0);
+    std::size_t last_user = messages.size();
     for (std::size_t start = system_end; start < messages.size(); ++start)
     {
-        if (messages[start].role != core::ChatRole::User)
+        if (messages[start].role == core::ChatRole::User)
         {
-            continue;
+            last_user = start;
+            if (remaining_chars <= max_chars)
+            {
+                return BuildTrimmedMessages(messages, system_end, start);
+            }
         }
-        if (system_chars + EstimateMessagesChars(messages, start) <= max_chars)
-        {
-            return BuildTrimmedMessages(messages, system_end, start);
-        }
+        remaining_chars -= EstimateMessageChars(messages[start]);
     }
 
-    for (std::size_t index = messages.size(); index > system_end; --index)
+    // The newest turn stays intact even when it alone exceeds the budget.
+    if (last_user != messages.size())
     {
-        if (messages[index - 1].role == core::ChatRole::User)
-        {
-            return BuildTrimmedMessages(messages, system_end, index - 1);
-        }
+        return BuildTrimmedMessages(messages, system_end, last_user);
     }
 
     return messages;

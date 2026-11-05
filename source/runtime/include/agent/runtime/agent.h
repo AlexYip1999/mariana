@@ -25,17 +25,28 @@ struct AgentId
 
 struct AgentDescriptor
 {
+    // 身份
     AgentId id;
     std::string name;
     std::string version;
-    AgentProfile profile;
+
+    // 创建时默认配置；运行期可变配置归 AgentSession
+    AgentProfile default_profile;
+
+    // 能力声明
     std::vector<std::string> capabilities;
 };
 
+/// Agent 私有服务作用域：HostScope 的 child registry，生命周期跟随 Agent。
+using AgentScope = ServiceRegistry;
+
 /// 一个 Agent 的独立运行组合。
-struct AgentServices
+struct AgentDependencies
 {
-    std::shared_ptr<ServiceRegistry> services;
+    // AgentScope；为空时 Agent 创建一个空 scope。
+    std::shared_ptr<AgentScope> services;
+
+    // 构造后交给 AgentSession 持有，Agent 不重复持有 executor。
     std::shared_ptr<AgentExecutor> executor;
 };
 
@@ -43,26 +54,28 @@ struct AgentServices
 class Agent
 {
   public:
-    Agent(AgentDescriptor descriptor, AgentServices services);
+    Agent(AgentDescriptor descriptor, AgentDependencies dependencies, std::string session_id = {});
 
-    AgentRunResult Send(const std::string& user_input);
-    void ClearHistory();
+    AgentRunResult Send(const std::string& user_input, const RunOptions& options = {});
+    AgentRunResult Send(const std::string& user_input, std::stop_token stop_token);
+    bool ClearHistory();
 
-    AgentSession& Session();
     const AgentSession& Session() const;
-    const core::Conversation& History() const;
+    const std::string& SessionId() const;
+    core::Conversation History() const;
 
     const AgentDescriptor& Descriptor() const;
     const AgentId& Id() const;
-    const AgentProfile& Profile() const;
-    const AgentServices& Services() const;
+    AgentProfile Profile() const;
+    AgentDependencies Dependencies() const;
 
-    /// 同步 descriptor 中的初始 profile，保持 Agent 状态一致。
-    void SetProfile(AgentProfile profile);
+    /// Only Session owns mutable configuration; Descriptor retains immutable creation defaults.
+    bool SetProfile(AgentProfile profile);
+    bool Reconfigure(AgentProfile profile, std::shared_ptr<AgentExecutor> executor);
 
   private:
-    AgentDescriptor m_descriptor;
-    AgentServices m_services;
+    const AgentDescriptor m_descriptor;
+    std::shared_ptr<AgentScope> m_scope;
     AgentSession m_session;
 };
 

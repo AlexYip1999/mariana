@@ -1,6 +1,6 @@
 ---
 name: cpp-code-style
-description: 用于在 agent-core 项目中新增、修改、评审或提交 C++ 代码时。强制项目代码规范：Allman 大括号（右大括号必须独占一行）、PascalCase 命名（类型/函数）、snake_case 命名（变量/文件，成员变量 m_ 前缀）、长布尔条件必须抽成命名函数、namespace 内部使用相对限定名、4 空格缩进、120 列，并在改完代码后运行 scripts/format.ps1、scripts/check-format.ps1、scripts/verify.ps1。任何 .h/.hpp/.cpp 改动后都必须使用。
+description: 用于在 agent-core 项目中新增、修改、评审或提交 C++ 代码时。强制项目代码规范：Allman 大括号（右大括号必须独占一行）、PascalCase 命名（类型/函数）、snake_case 命名（变量/文件，成员变量 m_ 前缀）、多字段结构体按语义分组、长布尔条件必须抽成命名函数、namespace 内部使用相对限定名、4 空格缩进、120 列，并在改完代码后运行 scripts/format.ps1、scripts/check-format.ps1、scripts/verify.ps1。任何 .h/.hpp/.cpp 改动后都必须使用。
 ---
 
 # C++ 代码规范（agent-core）
@@ -73,6 +73,75 @@ request.messages = {
     {agent::core::ChatRole::User, "hi"},
 };
 ```
+
+## 长类型别名
+
+`std::function` / 回调类型如果跨行、超过约 80 列，或作为公开字段/函数参数重复出现，优先用 `using` 起语义化别名。
+
+```cpp
+// 不好：字段声明被类型签名淹没
+std::function<std::shared_ptr<runtime::AgentExecutor>(
+    const std::filesystem::path&)> create_executor;
+
+// 好：名字表达用途
+using ExecutorFactory =
+    std::function<std::shared_ptr<runtime::AgentExecutor>(const std::filesystem::path&)>;
+
+ExecutorFactory create_executor;
+```
+
+规则：
+
+- 别名名用 PascalCase，表达“这个回调是做什么的”，例如 `ExecutorFactory`、`TransportFactory`、`EnvironmentLookup`；
+- 不要起 `FuncType1` / `CallbackAlias` 这种没有语义的名字；
+- 短小、一次性的 `std::function<void()>` 参数可以不单独起别名；
+- 别名放在使用它的命名空间内，避免污染全局；
+- 别名只解决可读性，不改变类型、ABI 或性能。
+
+## 结构体排版
+
+多字段 `struct` 按语义分组，组间空一行；必要时加短注释。目标是让读者一眼看出“输入 / 参数 / 上下文 / 结果 / 错误”。
+
+```cpp
+struct ChatRequest
+{
+    // 模型与输入
+    std::string model;
+    std::vector<ChatMessage> messages;
+    std::vector<ToolSpec> tools;
+
+    // 采样参数
+    double temperature = 0.0;
+    int max_tokens = 1024;
+
+    // 单次调用上下文：取消与 deadline
+    CallContext call;
+};
+
+struct ChatResponse
+{
+    // 结果
+    bool ok = false;
+    std::string content;
+    std::vector<ToolCall> tool_calls;
+
+    // 用量与结束原因
+    ChatUsage usage;
+    std::string finish_reason;
+
+    // 错误
+    std::string error;
+    CallError error_code = CallError::None;
+};
+```
+
+规则：
+
+- 触发条件：结构体字段较多、字段属于 2 类以上语义，或阅读时容易混淆；
+- 字段少（≤3）或本身就是同一元组（如坐标、版本号）时，不强制分组、不硬塞注释；
+- 不要为了“好看”重排有序列化/ABI/字段偏移要求的字段；只加空行与注释；
+- 注释描述“这一组是什么”，不要逐字段复述字段名；
+- 分组不改变字段顺序和初始化值。
 
 ## 改完代码后的固定流程（顺序不要换）
 
@@ -162,6 +231,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 - [ ] 空函数体写成 `{}` 单行（`virtual void OnTurnStart() {}`）
 - [ ] 带初始化列表的空构造函数写成初始化列表 + 单独一行 `{}`
 - [ ] 多初始化项的逗号在行首（`, m_config(...)`）
+- [ ] 多字段结构体按语义分组，组间空行，必要处有短注释
+- [ ] 长的 std::function / 回调类型已用语义化 `using` 别名
 - [ ] `agent::...` namespace 内部使用相对限定名（`core::` / `model::` / `transport::` / `runtime::` / `plugins::`）
 - [ ] `third_party/`、`build/` 未被改动
 - [ ] `git status` 无意外文件

@@ -15,3 +15,5 @@ target_link_libraries(agent_model
     PRIVATE
         agent_third_party
 )
+
+set_target_properties(agent_model PROPERTIES FOLDER "Source/Integrations/Model")

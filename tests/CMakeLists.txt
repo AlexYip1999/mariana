@@ -24,9 +24,10 @@ target_link_libraries(agent_metrics_tests PRIVATE agent_metrics agent_third_part
 
 add_executable(agent_runtime_tests
     runtime_test.cpp
+    architecture_test.cpp
 )
 target_include_directories(agent_runtime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(agent_runtime_tests PRIVATE agent_runtime agent_third_party)
+target_link_libraries(agent_runtime_tests PRIVATE agent_runtime agent_metrics agent_third_party)
 
 add_executable(agent_tools_tests
     tools_test.cpp
@@ -51,7 +52,21 @@ if(WIN32)
     add_executable(agent_transport_winhttp_tests
         winhttp_transport_test.cpp
     )
-    target_link_libraries(agent_transport_winhttp_tests PRIVATE agent_transport agent_third_party)
+    target_link_libraries(agent_transport_winhttp_tests PRIVATE agent_transport agent_third_party ws2_32)
+    target_compile_definitions(agent_transport_winhttp_tests PRIVATE NOMINMAX)
+endif()
+
+# Solution Explorer 分组；不影响构建/ctest。
+set_target_properties(agent_core_tests PROPERTIES FOLDER "Tests/Core")
+set_target_properties(agent_transport_tests PROPERTIES FOLDER "Tests/Integrations/Transport")
+set_target_properties(agent_model_tests PROPERTIES FOLDER "Tests/Integrations/Model")
+set_target_properties(agent_metrics_tests PROPERTIES FOLDER "Tests/Plugins/Metrics")
+set_target_properties(agent_runtime_tests PROPERTIES FOLDER "Tests/Runtime")
+set_target_properties(agent_tools_tests PROPERTIES FOLDER "Tests/Plugins/Tools")
+set_target_properties(agent_cli_tests PROPERTIES FOLDER "Tests/Hosts")
+set_target_properties(agent_trace_tests PROPERTIES FOLDER "Tests/Plugins/Traces")
+if(WIN32)
+    set_target_properties(agent_transport_winhttp_tests PROPERTIES FOLDER "Tests/Integrations/Transport")
 endif()
 
 add_test(NAME agent_core_tests COMMAND agent_core_tests)
@@ -64,4 +79,5 @@ add_test(NAME agent_cli_tests COMMAND agent_cli_tests)
 add_test(NAME agent_trace_tests COMMAND agent_trace_tests)
 if(WIN32)
     add_test(NAME agent_transport_winhttp_tests COMMAND agent_transport_winhttp_tests)
+    set_tests_properties(agent_transport_winhttp_tests PROPERTIES TIMEOUT 30)
 endif()

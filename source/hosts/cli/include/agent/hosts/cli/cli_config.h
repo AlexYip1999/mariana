@@ -8,19 +8,33 @@
 namespace agent::hosts::cli
 {
 
+using EnvironmentLookup = std::function<std::string(const std::string&)>;
+
 struct CliConfig
 {
+    // 服务连接
     std::string provider = "deepseek";
     std::string cost_currency = "CNY";
     std::string endpoint = "https://api.deepseek.com/chat/completions";
     std::string model = "deepseek-flash";
     std::string api_key_env = "DEEPSEEK_API_KEY";
+
+    // 模型与提示词
     std::string system_prompt = "You are a concise assistant.";
     int timeout_ms = 30000;
     int max_tokens = 1024;
+
+    // 运行预算
     int max_steps = 8;
+    int turn_timeout_ms = 120000;
+    std::size_t max_tool_calls = 64;
+    std::size_t max_tool_output_bytes = 32768;
+
+    // 采样与上下文
     double temperature = 0.0;
     std::size_t max_context_chars = 120000;
+
+    // 工具
     std::vector<std::string> tool_names = {"read_file"};
 };
 
@@ -33,12 +47,17 @@ struct ConfigLoadResult
 
 struct DefaultConfigResult
 {
+    // 加载结果
     bool ok = true;
     bool found = false;
+
+    // 配置路径
     // 最终生效的配置路径：local 存在时是 local，否则是 shared；都没有时为空。
     std::string path;
     std::string shared_path;
     std::string local_path;
+
+    // 配置与错误
     CliConfig config;
     std::string error;
 };
@@ -73,6 +92,6 @@ DefaultConfigResult LoadDefaultCliConfig(const std::string& executable_path = {}
 ConfigInitResult WriteDefaultCliConfigFile(const std::string& path);
 
 /// 从环境变量取 API key；缺失时返回空字符串。
-std::string ResolveApiKey(const CliConfig& config, const std::function<std::string(const std::string&)>& get_env);
+std::string ResolveApiKey(const CliConfig& config, const EnvironmentLookup& get_env);
 
 } // namespace agent::hosts::cli

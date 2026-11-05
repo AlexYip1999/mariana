@@ -42,11 +42,13 @@ MetricsCollector::MetricsCollector(std::string provider, std::int64_t context_wi
 
 void MetricsCollector::OnTurnStart()
 {
+    std::lock_guard lock(m_mutex);
     ++m_snapshot.turns;
 }
 
 void MetricsCollector::OnModelRequest(const core::ChatRequest& request)
 {
+    std::lock_guard lock(m_mutex);
     ++m_snapshot.steps;
     m_request_start = m_steady_now();
     m_request_model = request.model;
@@ -55,6 +57,7 @@ void MetricsCollector::OnModelRequest(const core::ChatRequest& request)
 
 void MetricsCollector::OnModelResponse(const core::ChatResponse& response)
 {
+    std::lock_guard lock(m_mutex);
     double duration_seconds = 0.0;
     if (m_request_active)
     {
@@ -140,14 +143,15 @@ void MetricsCollector::ApplyCost(const core::ChatUsage& usage)
     m_snapshot.total_cost += estimate.cost;
 }
 
-const MetricsSnapshot& MetricsCollector::Snapshot() const
+MetricsSnapshot MetricsCollector::Snapshot() const
 {
+    std::lock_guard lock(m_mutex);
     return m_snapshot;
 }
 
 std::string MetricsCollector::CurrentSessionLine() const
 {
-    return FormatMetricsLine(m_snapshot);
+    return FormatMetricsLine(Snapshot());
 }
 
 } // namespace agent::plugins::metrics

@@ -14,8 +14,8 @@
 - `core/`：引擎无关的 agent 核心（`agent_core` 库，公共头文件 + 实现）
 - `integrations/`：外部集成（`transport`、`model`；include 根与 namespace 仍为 `agent/transport`、`agent/model`）
 - `plugins/`：能力插件（`metrics`、`tools`、`traces`）
-- `runtime/`：通用 Agent 运行时（`Agent` = 身份/配置 + `AgentSession` + `AgentServices`；scoped `ServiceRegistry`；`ToolRegistry`、`ToolPolicy`/`ContextPolicy`/`ToolOutputPolicy`）
-- `hosts/cli/`：宿主 #1，命令行（`agent-cli`、`CommandRegistry` 交互命令）
+- `runtime/`：`AgentSession` 负责配置、并发、记录上限、历史事务和 Turn 事件；`AgentRunner` 通过 `RunnerDependencies` 显式装配；`ExecuteTurn` 统一事务/事件协议，`TurnTransaction` 处理历史提交/回滚，`ToolDispatcher` 执行策略/预算/去重，`ToolScheduler` 留给宿主线程接入；`ToolDescriptor` + `ValidateComposition` 做工具治理与组合校验；`SystemNotifier` 负责观察者分发与异常隔离；`ServiceRegistry` 仅用于宿主服务装配。
+- `hosts/cli/`：宿主 #1，命令行（`agent-cli`、`HostServices` / `AgentFactory` / `RunCliLoop` / `CommandRegistry`）
 
 后续会加入 `hosts/unreal/`、`hosts/android/`、`hosts/ios/` 等宿主模块。
 

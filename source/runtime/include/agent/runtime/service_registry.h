@@ -11,11 +11,12 @@ namespace agent::runtime
 
 /// 按接口类型存放的服务/插件实例注册表。
 /// registry 是一个组合作用域；parent 用于 fallback 到宿主级共享服务。
+/// Configure before publishing to worker threads; mutation is not synchronized. Runner does not query this registry.
 class ServiceRegistry
 {
   public:
-    explicit ServiceRegistry(const ServiceRegistry* parent = nullptr)
-        : m_parent(parent)
+    explicit ServiceRegistry(std::shared_ptr<const ServiceRegistry> parent = nullptr)
+        : m_parent(std::move(parent))
     {}
 
     template <typename T> void Set(std::shared_ptr<T> service)
@@ -52,11 +53,11 @@ class ServiceRegistry
 
     const ServiceRegistry* Parent() const
     {
-        return m_parent;
+        return m_parent.get();
     }
 
   private:
-    const ServiceRegistry* m_parent = nullptr;
+    std::shared_ptr<const ServiceRegistry> m_parent;
     std::unordered_map<std::type_index, std::shared_ptr<void>> m_services;
 };
 

@@ -66,6 +66,20 @@ TEST_CASE("reads a file inside the workspace")
     CHECK(result.content == "hello");
 }
 
+TEST_CASE("reads Unicode paths independently of the Windows code page")
+{
+    TempWorkspace workspace;
+    const auto directory = workspace.Path() / std::filesystem::path(u8"目录😀");
+    std::filesystem::create_directories(directory);
+    WriteFile(directory / std::filesystem::path(u8"中😀.txt"), "unicode file");
+    WriteFile(directory / ".ENV", "SECRET=1");
+    agent::plugins::tools::ReadFileTool tool(workspace.Path());
+    const auto result = tool.Execute(R"({"path":"目录😀/中😀.txt"})");
+    CHECK(result.ok);
+    CHECK(result.content == "unicode file");
+    CHECK_FALSE(tool.Execute(R"({"path":"目录😀/.ENV"})").ok);
+}
+
 TEST_CASE("rejects symlink escape")
 {
     TempWorkspace workspace;

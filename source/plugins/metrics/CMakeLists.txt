@@ -15,3 +15,5 @@ target_link_libraries(agent_metrics
 )
 
 target_compile_features(agent_metrics PUBLIC cxx_std_20)
+
+set_target_properties(agent_metrics PROPERTIES FOLDER "Source/Plugins/Metrics")

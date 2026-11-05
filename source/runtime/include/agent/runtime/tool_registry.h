@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "agent/core/tool.h"
+#include "agent/runtime/tool_descriptor.h"
 
 namespace agent::runtime
 {
@@ -17,21 +18,28 @@ class ToolRegistry
 {
   public:
     bool Register(std::shared_ptr<core::Tool> tool, std::string& error);
+    bool Register(std::shared_ptr<core::Tool> tool, ToolDescriptor descriptor, std::string& error);
     void Clear();
 
     core::Tool* Find(const std::string& name) const;
+    std::shared_ptr<core::Tool> FindShared(const std::string& name) const;
     bool Has(const std::string& name) const;
+
+    const ToolDescriptor* Descriptor(const std::string& name) const;
+    std::vector<ToolDescriptor> Descriptors() const;
 
     std::size_t Size() const;
 
     std::vector<core::ToolSpec> AllSpecs() const;
     std::vector<core::ToolSpec> SpecsFor(const std::vector<std::string>& names) const;
 
-    core::ToolResult Execute(const std::string& name, const std::string& arguments_json);
+    core::ToolResult Execute(const std::string& name, const std::string& arguments_json,
+                             const core::CallContext& context = {});
 
   private:
     std::vector<std::shared_ptr<core::Tool>> m_tools;
     std::unordered_map<std::string, std::shared_ptr<core::Tool>> m_tools_by_name;
+    std::unordered_map<std::string, ToolDescriptor> m_descriptors_by_name;
 };
 
 } // namespace agent::runtime

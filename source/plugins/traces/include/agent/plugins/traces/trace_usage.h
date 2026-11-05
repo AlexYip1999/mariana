@@ -9,9 +9,12 @@ namespace agent::plugins::traces
 
 struct UsageSummary
 {
+    // 调用计数
     int sessions = 0;
     int turns = 0;
     int model_calls = 0;
+
+    // token 用量
     std::uint64_t prompt_tokens = 0;
     std::uint64_t completion_tokens = 0;
     std::uint64_t total_tokens = 0;

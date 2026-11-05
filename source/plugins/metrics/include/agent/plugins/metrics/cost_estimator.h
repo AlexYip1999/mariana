@@ -19,19 +19,27 @@ enum class PeakSchedule
 /// 单位：货币 / 1M tokens，默认是 off-peak 价格。
 struct ModelPricing
 {
+    // 输入价格
     double cache_hit_input_per_million = 0.0;
     double cache_miss_input_per_million = 0.0;
+
+    // 输出价格
     double output_per_million = 0.0;
+
+    // 币种与高峰规则
     std::string currency = "CNY";
     PeakSchedule peak_schedule = PeakSchedule::None;
 };
 
 struct CostEstimate
 {
+    // 结果
     bool ok = false;
     double cost = 0.0;
     std::string currency = "CNY";
     bool peak = false;
+
+    // 失败信息
     std::string error;
 };
 

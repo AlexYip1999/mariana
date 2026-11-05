@@ -16,3 +16,5 @@ target_link_libraries(agent_tools
 )
 
 target_compile_features(agent_tools PUBLIC cxx_std_20)
+
+set_target_properties(agent_tools PROPERTIES FOLDER "Source/Plugins/Tools")

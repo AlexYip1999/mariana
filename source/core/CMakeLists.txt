@@ -11,3 +11,5 @@ target_include_directories(agent_core
 
 target_compile_features(agent_core PUBLIC cxx_std_20)
 target_compile_definitions(agent_core PUBLIC AGENT_CORE_VERSION="${PROJECT_VERSION}")
+
+set_target_properties(agent_core PROPERTIES FOLDER "Source/Core")

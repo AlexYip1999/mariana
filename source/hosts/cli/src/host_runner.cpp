@@ -9,40 +9,20 @@
 #include <utility>
 #include <vector>
 
-#include "agent/core/stats_view.h"
-#include "agent/core/system_registry.h"
 #include "agent/core/version.h"
+#include "agent/hosts/cli/agent_factory.h"
 #include "agent/hosts/cli/cli_command.h"
 #include "agent/hosts/cli/cli_config.h"
 #include "agent/hosts/cli/cli_options.h"
-#include "agent/hosts/cli/interactive_app.h"
-#include "agent/model/openai_chat_model.h"
-#include "agent/plugins/metrics/metrics_collector.h"
-#include "agent/plugins/tools/read_file_tool.h"
-#include "agent/plugins/traces/file_tracer.h"
-#include "agent/runtime/agent.h"
-#include "agent/runtime/agent_runner.h"
-#include "agent/runtime/service_registry.h"
-#include "agent/runtime/tool_registry.h"
+#include "agent/hosts/cli/host_services.h"
+#include "agent/hosts/cli/run_loop.h"
+#include "agent/hosts/cli/tool_catalog.h"
 
 namespace agent::hosts::cli
 {
 
 namespace
 {
-
-runtime::AgentProfile MakeAgentProfile(const CliConfig& config)
-{
-    runtime::AgentProfile profile;
-    profile.model = config.model;
-    profile.system_prompt = config.system_prompt;
-    profile.temperature = config.temperature;
-    profile.max_tokens = config.max_tokens;
-    profile.max_steps = config.max_steps;
-    profile.max_context_chars = config.max_context_chars;
-    profile.tool_names = config.tool_names;
-    return profile;
-}
 
 void PrintUsage(std::ostream& out, const CommandRegistry& registry)
 {
@@ -100,6 +80,38 @@ CliConfig LoadConfig(const CliOptions& options, const std::string& executable_pa
     return loaded.config;
 }
 
+std::filesystem::path ResolveWorkspace(const HostEnvironment& environment, std::ostream& err)
+{
+    std::error_code workspace_error;
+    const std::filesystem::path workspace =
+        environment.current_path ? environment.current_path() : std::filesystem::current_path(workspace_error);
+    if (workspace_error || !std::filesystem::is_directory(workspace, workspace_error))
+    {
+        err << "invalid current workspace\n";
+        return {};
+    }
+    return workspace;
+}
+
+bool ValidateConfiguredTools(const CliConfig& config, const ToolCatalog& catalog, std::ostream& err)
+{
+    for (const std::string& tool_name : config.tool_names)
+    {
+        if (catalog.Has(tool_name))
+        {
+            continue;
+        }
+        err << "config error: unknown tool '" << tool_name << "' in tool_names; available:";
+        for (const std::string& available : catalog.Names())
+        {
+            err << " " << available;
+        }
+        err << "\n";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int RunHost(const std::vector<std::string>& args, const HostEnvironment& environment, std::istream& in,
@@ -128,7 +140,7 @@ int RunHost(const std::vector<std::string>& args, const HostEnvironment& environ
     }
 
     int config_exit = 0;
-    CliConfig config = LoadConfig(options, environment.executable_path, err, config_exit);
+    const CliConfig config = LoadConfig(options, environment.executable_path, err, config_exit);
     if (config_exit != 0)
     {
         return config_exit;
@@ -141,7 +153,7 @@ int RunHost(const std::vector<std::string>& args, const HostEnvironment& environ
         return 2;
     }
 
-    std::unique_ptr<agent::transport::HttpTransport> transport =
+    std::shared_ptr<transport::HttpTransport> transport =
         environment.create_transport ? environment.create_transport() : nullptr;
     if (!transport)
     {
@@ -149,89 +161,55 @@ int RunHost(const std::vector<std::string>& args, const HostEnvironment& environ
         return 2;
     }
 
-    model::OpenAiConfig model_config;
-    model_config.endpoint = config.endpoint;
-    model_config.model = config.model;
-    model_config.api_key = api_key;
-    model_config.timeout_ms = config.timeout_ms;
-    model::OpenAiChatModel model(*transport, model_config);
-
-    std::error_code workspace_error;
-    const std::filesystem::path workspace =
-        environment.current_path ? environment.current_path() : std::filesystem::current_path(workspace_error);
-    if (workspace_error || !std::filesystem::is_directory(workspace, workspace_error))
+    const std::filesystem::path workspace = ResolveWorkspace(environment, err);
+    if (workspace.empty())
     {
-        err << "invalid current workspace\n";
         return 2;
     }
 
-    auto tools = std::make_shared<runtime::ToolRegistry>();
-    std::string tool_error;
-    if (!tools->Register(std::make_shared<plugins::tools::ReadFileTool>(workspace), tool_error))
+    auto tool_catalog = std::make_shared<ToolCatalog>(DefaultToolCatalog());
+    if (!ValidateConfiguredTools(config, *tool_catalog, err))
     {
-        err << "tool registration failed: " << tool_error << "\n";
-        return 2;
-    }
-    for (const std::string& tool_name : config.tool_names)
-    {
-        if (!tools->Has(tool_name))
-        {
-            err << "config error: unknown tool '" << tool_name << "' in tool_names; registered: read_file\n";
-            return 2;
-        }
-    }
-
-    auto metrics = std::make_shared<plugins::metrics::MetricsCollector>(
-        config.provider, 1000000,
-        config.cost_currency == "USD" ? plugins::metrics::CostEstimator::DeepSeekUsdDefaults()
-                                      : plugins::metrics::CostEstimator::DeepSeekCnyDefaults());
-
-    auto tracer = std::make_shared<plugins::traces::FileTracer>("traces");
-    if (!tracer->IsOpen())
-    {
-        err << "cannot open trace directory: traces\n";
         return 2;
     }
 
-    auto systems = std::make_shared<core::SystemRegistry>();
-    systems->Add(metrics);
-    systems->Add(tracer);
+    const std::string session_id = runtime::NewExecutionId("session");
+    HostServicesConfig services_config;
+    services_config.config = config;
+    services_config.workspace = workspace;
+    services_config.session_id = session_id;
+    services_config.api_key = api_key;
+    services_config.commands = command_registry;
+    services_config.tool_catalog = tool_catalog;
+    services_config.transport = transport;
 
-    runtime::ServiceRegistry host_services;
-    host_services.Set<core::SystemRegistry>(systems);
-    host_services.Set<core::StatsView>(metrics);
-    host_services.Set<CommandRegistry>(command_registry);
+    std::string services_error;
+    std::optional<HostServices> services = BuildHostServices(services_config, services_error);
+    if (!services)
+    {
+        err << services_error << "\n";
+        return 2;
+    }
 
-    auto context = std::make_shared<CliContext>();
-    context->config = config;
-    context->workspace = workspace;
-    context->tools = tools;
-    context->systems = systems;
-    context->stats = metrics;
-    context->trace_dir = "traces";
-    context->current_trace_path = tracer->Path().string();
-    host_services.Set<CliContext>(context);
+    auto factory = std::make_shared<AgentFactory>(config, services->model, services->systems, tool_catalog);
+    services->context->create_executor = [factory](const std::filesystem::path& workspace_path)
+    {
+        return factory->CreateExecutor(workspace_path);
+    };
 
-    auto agent_registry = std::make_shared<runtime::ServiceRegistry>(&host_services);
-    agent_registry->Set<runtime::ToolRegistry>(tools);
-    agent_registry->Set<runtime::ToolPolicy>(std::make_shared<runtime::AllowAllToolPolicy>());
-    agent_registry->Set<runtime::ContextPolicy>(std::make_shared<runtime::KeepRecentTurnsPolicy>());
-    agent_registry->Set<runtime::ToolOutputPolicy>(std::make_shared<runtime::TruncateToolOutputPolicy>());
+    std::shared_ptr<runtime::AgentRunner> executor;
+    try
+    {
+        executor = factory->CreateExecutor(workspace);
+    }
+    catch (const std::exception& exception)
+    {
+        err << "tool registration failed: " << exception.what() << "\n";
+        return 2;
+    }
 
-    auto executor = std::make_shared<runtime::AgentRunner>(model, *agent_registry);
-
-    runtime::AgentDescriptor descriptor;
-    descriptor.id.value = "cli";
-    descriptor.name = "agent-cli";
-    descriptor.version = core::Version();
-    descriptor.profile = MakeAgentProfile(config);
-
-    runtime::AgentServices agent_services;
-    agent_services.services = agent_registry;
-    agent_services.executor = executor;
-    runtime::Agent agent(std::move(descriptor), agent_services);
-
-    return RunInteractive(agent, in, out, err, host_services);
+    runtime::Agent agent = factory->CreateAgent(executor, services->session_scope, session_id);
+    return RunCliLoop(agent, *services->session_scope, in, out, err);
 }
 
 } // namespace agent::hosts::cli

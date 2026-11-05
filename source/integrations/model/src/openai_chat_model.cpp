@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -78,14 +79,27 @@ std::string DumpJson(const nlohmann::json& value)
 
 } // namespace
 
-OpenAiChatModel::OpenAiChatModel(transport::HttpTransport& transport, OpenAiConfig config)
-    : m_transport(transport)
+OpenAiChatModel::OpenAiChatModel(std::shared_ptr<transport::HttpTransport> transport, OpenAiConfig config)
+    : m_transport(std::move(transport))
     , m_config(std::move(config))
-{}
+{
+    if (!m_transport)
+    {
+        throw std::invalid_argument("model requires an owning transport dependency");
+    }
+}
 
 core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
 {
     core::ChatResponse response;
+    response.error_code = core::CallError::ModelFailure;
+    if (request.call.Interruption() != core::CallError::None)
+    {
+        response.error_code = request.call.Interruption();
+        response.error =
+            response.error_code == core::CallError::Cancelled ? "model request cancelled" : "model deadline exceeded";
+        return response;
+    }
     if (m_config.api_key.empty())
     {
         response.error = "API key is empty";
@@ -172,9 +186,23 @@ core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
         },
     };
     http_request.body = DumpJson(body);
-    http_request.timeout_ms = m_config.timeout_ms;
+    http_request.timeout_ms = request.call.RemainingTimeoutMs(m_config.timeout_ms);
+    http_request.stop_token = request.call.stop_token;
+    if (http_request.timeout_ms <= 0)
+    {
+        response.error_code = core::CallError::DeadlineExceeded;
+        response.error = "model deadline exceeded";
+        return response;
+    }
 
-    const transport::HttpResponse http_response = m_transport.PostJson(http_request);
+    const transport::HttpResponse http_response = m_transport->PostJson(http_request);
+    if (request.call.Interruption() != core::CallError::None)
+    {
+        response.error_code = request.call.Interruption();
+        response.error =
+            response.error_code == core::CallError::Cancelled ? "model request cancelled" : "model deadline exceeded";
+        return response;
+    }
     if (!http_response.error.empty())
     {
         response.error = http_response.error;
@@ -306,6 +334,7 @@ core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
         }
 
         response.ok = true;
+        response.error_code = core::CallError::None;
     }
     catch (const nlohmann::json::exception& error)
     {

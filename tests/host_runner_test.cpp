@@ -43,8 +43,16 @@ class ScopedWorkingDirectory
 class FixedTransport : public agent::transport::HttpTransport
 {
   public:
-    agent::transport::HttpResponse PostJson(const agent::transport::HttpRequest&) override
+    explicit FixedTransport(std::shared_ptr<std::vector<nlohmann::json>> requests = nullptr)
+        : m_requests(std::move(requests))
+    {}
+
+    agent::transport::HttpResponse PostJson(const agent::transport::HttpRequest& request) override
     {
+        if (m_requests)
+        {
+            m_requests->push_back(nlohmann::json::parse(request.body));
+        }
         nlohmann::json parsed;
         parsed["choices"] = nlohmann::json::array();
         parsed["choices"].push_back({{"message", {{"content", "ok"}}}, {"finish_reason", "stop"}});
@@ -53,6 +61,9 @@ class FixedTransport : public agent::transport::HttpTransport
         response.body = parsed.dump();
         return response;
     }
+
+  private:
+    std::shared_ptr<std::vector<nlohmann::json>> m_requests;
 };
 
 std::filesystem::path MakeTempWorkspace()
@@ -106,6 +117,34 @@ TEST_CASE("host runner prints help and version")
     CHECK(RunWithInput({"--version"}, environment, "", out, err) == 0);
     CHECK_FALSE(out.str().empty());
     CHECK(err.str().empty());
+}
+
+TEST_CASE("workspace changes preserve tool configuration until explicitly enabled")
+{
+    const auto workspace = MakeTempWorkspace();
+    {
+        ScopedWorkingDirectory scoped(workspace);
+        std::ofstream("no-tools.json") << R"({"tool_names":[]})";
+        auto requests = std::make_shared<std::vector<nlohmann::json>>();
+        auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-only"}});
+        environment.create_transport = [requests]()
+        {
+            return std::make_unique<FixedTransport>(requests);
+        };
+        std::ostringstream out;
+        std::ostringstream err;
+        const std::string input =
+            "first\n/workspace .\nsecond\n/tools on\nthird\n/tools off\n/workspace .\nfourth\n/exit\n";
+        CHECK(RunWithInput({"--config", "no-tools.json"}, environment, input, out, err) == 0);
+        CHECK(err.str().empty());
+        REQUIRE(requests->size() == 4);
+        CHECK_FALSE((*requests)[0].contains("tools"));
+        CHECK_FALSE((*requests)[1].contains("tools"));
+        REQUIRE((*requests)[2]["tools"].size() == 1);
+        CHECK((*requests)[2]["tools"][0]["function"]["name"] == "read_file");
+        CHECK_FALSE((*requests)[3].contains("tools"));
+    }
+    std::filesystem::remove_all(workspace);
 }
 
 TEST_CASE("host runner config init command is idempotent")

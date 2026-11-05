@@ -311,8 +311,14 @@ std::string ReadFileTool::ParametersJson() const
     return R"({"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path"}},"required":["path"],"additionalProperties":false})";
 }
 
-core::ToolResult ReadFileTool::Execute(const std::string& arguments_json)
+core::ToolResult ReadFileTool::Execute(const std::string& arguments_json, const core::CallContext& context)
 {
+    if (context.Interruption() != core::CallError::None)
+    {
+        auto result = MakeError("read_file interrupted");
+        result.error_code = context.Interruption();
+        return result;
+    }
     nlohmann::json arguments;
     try
     {

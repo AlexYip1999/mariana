@@ -50,10 +50,47 @@ bool HasHeader(const agent::transport::HttpRequest& request, const std::string& 
 
 } // namespace
 
+TEST_CASE("model owns transport and clamps requests to remaining turn deadline")
+{
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    std::weak_ptr<agent::tests::FakeHttpTransport> retained = transport;
+    agent::model::OpenAiChatModel model(transport, MakeConfig());
+    transport.reset();
+    REQUIRE_FALSE(retained.expired());
+    auto request = MakeChatRequest();
+    request.call.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+    model.Chat(request);
+    REQUIRE(retained.lock()->RequestCount() == 1);
+    CHECK(retained.lock()->LastRequest().timeout_ms > 0);
+    CHECK(retained.lock()->LastRequest().timeout_ms <= 1000);
+    request.call.deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+    const auto expired = model.Chat(request);
+    CHECK(expired.error_code == agent::core::CallError::DeadlineExceeded);
+    CHECK(retained.lock()->RequestCount() == 1);
+    CHECK_THROWS_AS(agent::model::OpenAiChatModel(nullptr, MakeConfig()), std::invalid_argument);
+}
+
+TEST_CASE("model forwards cancellation and skips pre-cancelled requests")
+{
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    agent::model::OpenAiChatModel model(transport, MakeConfig());
+    auto request = MakeChatRequest();
+    std::stop_source stop;
+    request.call.stop_token = stop.get_token();
+    model.Chat(request);
+    CHECK(transport->RequestCount() == 1);
+    CHECK(transport->LastRequest().stop_token == stop.get_token());
+    stop.request_stop();
+    const auto response = model.Chat(request);
+    CHECK_FALSE(response.ok);
+    CHECK(response.error.find("cancelled") != std::string::npos);
+    CHECK(transport->RequestCount() == 1);
+}
+
 TEST_CASE("builds OpenAI-compatible request and parses content")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json parsed;
@@ -80,9 +117,9 @@ TEST_CASE("builds OpenAI-compatible request and parses content")
     CHECK(response.usage.total_tokens == 140);
     CHECK(response.usage.prompt_cache_hit_tokens == 100);
     CHECK(response.usage.prompt_cache_miss_tokens == 20);
-    CHECK(transport.RequestCount() == 1);
+    CHECK(transport->RequestCount() == 1);
 
-    const agent::transport::HttpRequest& request = transport.LastRequest();
+    const agent::transport::HttpRequest& request = transport->LastRequest();
     CHECK(request.url == "https://api.deepseek.com/chat/completions");
     CHECK(request.timeout_ms == 15000);
     CHECK(HasHeader(request, "Content-Type", "application/json"));
@@ -99,8 +136,8 @@ TEST_CASE("builds OpenAI-compatible request and parses content")
 
 TEST_CASE("serializes tools and tool messages")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json parsed;
@@ -141,7 +178,7 @@ TEST_CASE("serializes tools and tool messages")
     CHECK(response.ok);
     CHECK(response.content == "done");
 
-    const nlohmann::json body = nlohmann::json::parse(transport.LastRequest().body);
+    const nlohmann::json body = nlohmann::json::parse(transport->LastRequest().body);
     CHECK(body["tools"].size() == 1);
     CHECK(body["tools"][0]["type"] == "function");
     CHECK(body["tools"][0]["function"]["name"] == "read_file");
@@ -156,7 +193,7 @@ TEST_CASE("serializes tools and tool messages")
 
 TEST_CASE("rejects invalid tool schema before sending")
 {
-    agent::tests::FakeHttpTransport transport;
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
     agent::model::OpenAiChatModel adapter(transport, MakeConfig());
 
     agent::core::ChatRequest request = MakeChatRequest();
@@ -169,13 +206,13 @@ TEST_CASE("rejects invalid tool schema before sending")
 
     CHECK_FALSE(response.ok);
     CHECK(response.error.find("invalid tool parameters") != std::string::npos);
-    CHECK(transport.RequestCount() == 0);
+    CHECK(transport->RequestCount() == 0);
 }
 
 TEST_CASE("does not crash on invalid UTF-8 message content")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json parsed;
@@ -197,13 +234,13 @@ TEST_CASE("does not crash on invalid UTF-8 message content")
 
     CHECK(response.ok);
     CHECK(response.content == "ok");
-    CHECK(transport.RequestCount() == 1);
+    CHECK(transport->RequestCount() == 1);
 }
 
 TEST_CASE("rejects malformed tool_calls response")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json function;
@@ -231,8 +268,8 @@ TEST_CASE("rejects malformed tool_calls response")
 
 TEST_CASE("parses tool calls with null content")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json arguments;
@@ -269,8 +306,8 @@ TEST_CASE("parses tool calls with null content")
 
 TEST_CASE("rejects response without message")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json choice;
@@ -292,8 +329,8 @@ TEST_CASE("rejects response without message")
 
 TEST_CASE("rejects non-array tool_calls")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json message;
@@ -318,8 +355,8 @@ TEST_CASE("rejects non-array tool_calls")
 
 TEST_CASE("parses finish reason")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json message;
@@ -344,8 +381,8 @@ TEST_CASE("parses finish reason")
 
 TEST_CASE("parses OpenAI-style cached tokens")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json parsed;
@@ -371,8 +408,8 @@ TEST_CASE("parses OpenAI-style cached tokens")
 
 TEST_CASE("returns transport error unchanged")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             agent::transport::HttpResponse response;
@@ -389,8 +426,8 @@ TEST_CASE("returns transport error unchanged")
 
 TEST_CASE("reports HTTP status and error message")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             nlohmann::json parsed;
@@ -411,8 +448,8 @@ TEST_CASE("reports HTTP status and error message")
 
 TEST_CASE("rejects invalid JSON response")
 {
-    agent::tests::FakeHttpTransport transport;
-    transport.SetHandler(
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
+    transport->SetHandler(
         [](const agent::transport::HttpRequest&)
         {
             agent::transport::HttpResponse response;
@@ -430,7 +467,7 @@ TEST_CASE("rejects invalid JSON response")
 
 TEST_CASE("rejects empty API key before sending")
 {
-    agent::tests::FakeHttpTransport transport;
+    auto transport = std::make_shared<agent::tests::FakeHttpTransport>();
     agent::model::OpenAiConfig config = MakeConfig();
     config.api_key.clear();
     agent::model::OpenAiChatModel adapter(transport, config);
@@ -439,5 +476,5 @@ TEST_CASE("rejects empty API key before sending")
 
     CHECK_FALSE(response.ok);
     CHECK(response.error == "API key is empty");
-    CHECK(transport.RequestCount() == 0);
+    CHECK(transport->RequestCount() == 0);
 }

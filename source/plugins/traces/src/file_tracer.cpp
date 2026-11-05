@@ -12,6 +12,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "agent/core/utf8.h"
+
 namespace agent::plugins::traces
 {
 
@@ -116,16 +118,36 @@ void FileTracer::Close()
 
 void FileTracer::OnTurnStart()
 {
+    StartTurn(nullptr);
+}
+
+void FileTracer::OnTurnStarted(const core::TurnEvent& event)
+{
+    StartTurn(&event);
+}
+
+void FileTracer::StartTurn(const core::TurnEvent* event)
+{
     ++m_turn;
     m_step = 0;
     m_turn_started = std::chrono::steady_clock::now();
+    if (event != nullptr && !event->run_id.empty())
+    {
+        m_run_id = event->run_id;
+    }
+    if (event != nullptr && !event->session_id.empty())
+    {
+        m_session_id = event->session_id;
+    }
 
-    nlohmann::json event;
-    event["ts"] = Timestamp();
-    event["event"] = "turn_start";
-    event["turn"] = m_turn;
+    nlohmann::json event_json;
+    event_json["ts"] = Timestamp();
+    event_json["event"] = "turn_start";
+    event_json["turn"] = m_turn;
+    event_json["session_id"] = m_session_id;
+    event_json["run_id"] = m_run_id;
 
-    WriteEvent(event.dump());
+    WriteEvent(event_json.dump());
 }
 
 void FileTracer::OnModelRequest(const core::ChatRequest& request)
@@ -147,6 +169,8 @@ void FileTracer::OnModelRequest(const core::ChatRequest& request)
     event["event"] = "model_request";
     event["turn"] = m_turn;
     event["step"] = m_step;
+    event["session_id"] = m_session_id;
+    event["run_id"] = m_run_id;
     event["model"] = request.model;
     event["message_count"] = request.messages.size();
     event["tool_count"] = request.tools.size();
@@ -163,6 +187,8 @@ void FileTracer::OnModelResponse(const core::ChatResponse& response)
     event["event"] = "model_response";
     event["turn"] = m_turn;
     event["step"] = m_step;
+    event["session_id"] = m_session_id;
+    event["run_id"] = m_run_id;
     event["model"] = m_model;
     event["ok"] = response.ok;
     event["finish_reason"] = response.finish_reason;
@@ -184,6 +210,8 @@ void FileTracer::OnToolCall(const core::ToolCall& call)
     event["event"] = "tool_call";
     event["turn"] = m_turn;
     event["step"] = m_step;
+    event["session_id"] = m_session_id;
+    event["run_id"] = m_run_id;
     event["id"] = call.id;
     event["name"] = call.name;
     event["arguments"] = Sanitize(call.arguments_json);
@@ -198,6 +226,8 @@ void FileTracer::OnToolResult(const core::ToolCall& call, const core::ToolResult
     event["event"] = "tool_result";
     event["turn"] = m_turn;
     event["step"] = m_step;
+    event["session_id"] = m_session_id;
+    event["run_id"] = m_run_id;
     event["id"] = call.id;
     event["name"] = call.name;
     event["ok"] = result.ok;
@@ -206,17 +236,54 @@ void FileTracer::OnToolResult(const core::ToolCall& call, const core::ToolResult
     WriteEvent(event.dump());
 }
 
-void FileTracer::OnTurnEnd(bool ok, const std::string& error, int steps)
+void FileTracer::OnToolReplayed(const core::ToolCall& call, const core::ToolResult& result)
 {
     nlohmann::json event;
     event["ts"] = Timestamp();
-    event["event"] = "turn_end";
+    event["event"] = "tool_result";
     event["turn"] = m_turn;
-    event["ok"] = ok;
-    event["error"] = Sanitize(error);
-    event["steps"] = steps;
-    event["duration_ms"] = ElapsedMillis(m_turn_started);
+    event["step"] = m_step;
+    event["session_id"] = m_session_id;
+    event["run_id"] = m_run_id;
+    event["id"] = call.id;
+    event["name"] = call.name;
+    event["ok"] = result.ok;
+    event["content"] = Sanitize(result.ok ? result.content : result.error);
+    event["replayed"] = true;
+    event["duration_ms"] = 0;
     WriteEvent(event.dump());
+}
+
+void FileTracer::OnTurnEnd(bool ok, const std::string& error, int steps)
+{
+    EndTurn(nullptr, ok, error, steps);
+}
+
+void FileTracer::OnTurnEnded(const core::TurnEvent& event)
+{
+    EndTurn(&event, event.ok, event.error, event.steps);
+}
+
+void FileTracer::EndTurn(const core::TurnEvent* event, bool ok, const std::string& error, int steps)
+{
+    nlohmann::json event_json;
+    event_json["ts"] = Timestamp();
+    event_json["event"] = "turn_end";
+    event_json["turn"] = m_turn;
+    event_json["session_id"] = m_session_id;
+    event_json["run_id"] = m_run_id;
+    event_json["ok"] = ok;
+    event_json["error"] = Sanitize(error);
+    event_json["steps"] = steps;
+    if (event != nullptr)
+    {
+        event_json["status"] = event->status;
+        event_json["error_code"] = event->error_code;
+        event_json["tool_attempts"] = event->tool_attempts;
+        event_json["replayed"] = event->replayed;
+    }
+    event_json["duration_ms"] = ElapsedMillis(m_turn_started);
+    WriteEvent(event_json.dump());
 }
 
 void FileTracer::WriteEvent(const std::string& json_line)
@@ -271,7 +338,7 @@ std::string FileTracer::Sanitize(std::string text) const
 
     if (text.size() > MAX_TRACE_TEXT)
     {
-        text.resize(MAX_TRACE_TEXT);
+        text.resize(core::Utf8PrefixSize(text, MAX_TRACE_TEXT));
         text += "... [truncated]";
     }
     return text;

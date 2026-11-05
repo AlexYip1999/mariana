@@ -31,7 +31,8 @@ class FakeTool : public agent::core::Tool
         return R"({"type":"object","properties":{}})";
     }
 
-    agent::core::ToolResult Execute(const std::string& arguments_json) override
+    agent::core::ToolResult Execute(const std::string& arguments_json,
+                                    const agent::core::CallContext& = agent::core::CallContext()) override
     {
         ++m_call_count;
         m_last_arguments = arguments_json;

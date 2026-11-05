@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include "agent/core/chat_model.h"
@@ -10,9 +11,12 @@ namespace agent::model
 
 struct OpenAiConfig
 {
+    // 目标与服务
     std::string endpoint = "https://api.deepseek.com/chat/completions";
     std::string model = "deepseek-flash";
     std::string api_key;
+
+    // 单次请求时限
     int timeout_ms = 30000;
 };
 
@@ -20,12 +24,12 @@ struct OpenAiConfig
 class OpenAiChatModel : public core::ChatModel
 {
   public:
-    OpenAiChatModel(transport::HttpTransport& transport, OpenAiConfig config);
+    OpenAiChatModel(std::shared_ptr<transport::HttpTransport> transport, OpenAiConfig config);
 
     core::ChatResponse Chat(const core::ChatRequest& request) override;
 
   private:
-    transport::HttpTransport& m_transport;
+    std::shared_ptr<transport::HttpTransport> m_transport;
     OpenAiConfig m_config;
 };
 
