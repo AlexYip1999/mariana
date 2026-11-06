@@ -215,8 +215,7 @@ TEST_CASE("agent profile defaults stay immutable and executor replacement releas
     auto initial = first.Runner();
     std::weak_ptr<agent::runtime::AgentExecutor> previous = initial;
     agent::runtime::AgentDescriptor descriptor;
-    descriptor.default_profile = first.profile;
-    agent::runtime::Agent agent(descriptor, {nullptr, initial});
+    agent::runtime::Agent agent(descriptor, first.profile, {nullptr, initial});
     initial.reset();
     auto current = agent.Profile();
     current.system_prompt = "updated";
@@ -225,7 +224,6 @@ TEST_CASE("agent profile defaults stay immutable and executor replacement releas
     CHECK(previous.expired());
     CHECK(agent.Dependencies().executor == replacement);
     CHECK(agent.Profile().system_prompt == "updated");
-    CHECK(agent.Descriptor().default_profile.system_prompt == "system");
     current.system_prompt = "uncommitted";
     CHECK(agent.Profile().system_prompt == "updated");
     CHECK(agent.Send("hello").Ok());

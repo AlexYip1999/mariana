@@ -126,7 +126,7 @@ core 不出现：
 
 | 对象 | 职责 |
 |---|---|
-| `AgentDescriptor` | 身份、版本、能力、默认 profile |
+| `AgentDescriptor` | 身份、版本、能力 | 运行时 profile |
 | `AgentScope` | Agent 私有作用域（ServiceRegistry child） |
 | `Agent` | 身份 + Session + AgentScope 门面 |
 | `AgentSession` | 可变配置、历史、并发、记录、Turn 事务 owner |

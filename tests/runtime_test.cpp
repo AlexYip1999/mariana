@@ -184,13 +184,12 @@ TEST_CASE("agent facade owns descriptor and session")
     descriptor.id.value = "npc-1";
     descriptor.name = "merchant";
     descriptor.version = "1";
-    descriptor.default_profile = MakeConfig();
     descriptor.capabilities = {"trade"};
 
     agent::runtime::AgentDependencies agent_services;
     agent_services.services = services;
     agent_services.executor = executor;
-    agent::runtime::Agent agent(descriptor, agent_services, "session-1");
+    agent::runtime::Agent agent(descriptor, MakeConfig(), agent_services, "session-1");
     CHECK(agent.Id().value == "npc-1");
     CHECK(agent.SessionId() == "session-1");
     CHECK(agent.SessionId() == agent.Session().Id());
@@ -208,7 +207,6 @@ TEST_CASE("agent facade owns descriptor and session")
     profile.tool_names = {"read_file"};
     agent.SetProfile(std::move(profile));
     CHECK(agent.Profile().tool_names == std::vector<std::string>{"read_file"});
-    CHECK(agent.Descriptor().default_profile.tool_names.empty());
 
     agent.ClearHistory();
     CHECK(agent.History().messages.size() == 1);
@@ -225,11 +223,10 @@ TEST_CASE("agent creates an empty scope when dependencies omit one")
 
     agent::runtime::AgentDescriptor descriptor;
     descriptor.id.value = "worker";
-    descriptor.default_profile = MakeConfig();
 
     agent::runtime::AgentDependencies dependencies;
     dependencies.executor = executor;
-    agent::runtime::Agent agent(descriptor, dependencies, "session-worker");
+    agent::runtime::Agent agent(descriptor, MakeConfig(), dependencies, "session-worker");
     REQUIRE(agent.Dependencies().services != nullptr);
     CHECK(agent.Send("hi").Ok());
     CHECK(agent.SessionId() == "session-worker");
@@ -249,12 +246,12 @@ TEST_CASE("agent rejects mismatched scope and executor system registries")
 
     agent::runtime::AgentDescriptor descriptor;
     descriptor.id.value = "npc-mismatch";
-    descriptor.default_profile = MakeConfig();
 
     agent::runtime::AgentDependencies agent_dependencies;
     agent_dependencies.services = scope;
     agent_dependencies.executor = std::make_shared<agent::runtime::AgentRunner>(dependencies);
-    CHECK_THROWS_AS(agent::runtime::Agent(descriptor, agent_dependencies, "session-mismatch"), std::invalid_argument);
+    CHECK_THROWS_AS(agent::runtime::Agent(descriptor, MakeConfig(), agent_dependencies, "session-mismatch"),
+                    std::invalid_argument);
 }
 
 TEST_CASE("agent adopts executor systems when the scope has none")
@@ -270,12 +267,11 @@ TEST_CASE("agent adopts executor systems when the scope has none")
     auto scope = std::make_shared<agent::runtime::ServiceRegistry>();
     agent::runtime::AgentDescriptor descriptor;
     descriptor.id.value = "npc-scope";
-    descriptor.default_profile = MakeConfig();
 
     agent::runtime::AgentDependencies agent_dependencies;
     agent_dependencies.services = scope;
     agent_dependencies.executor = std::make_shared<agent::runtime::AgentRunner>(dependencies);
-    agent::runtime::Agent agent(descriptor, agent_dependencies, "session-scope");
+    agent::runtime::Agent agent(descriptor, MakeConfig(), agent_dependencies, "session-scope");
     CHECK(scope->Get<agent::core::SystemRegistry>() == systems);
     CHECK(agent.Send("hi").Ok());
 }

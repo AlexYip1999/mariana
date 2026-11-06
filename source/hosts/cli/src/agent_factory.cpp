@@ -37,12 +37,11 @@ runtime::Agent AgentFactory::CreateAgent(std::shared_ptr<runtime::AgentExecutor>
     descriptor.id.value = "cli";
     descriptor.name = "agent-cli";
     descriptor.version = core::Version();
-    descriptor.default_profile = MakeProfile();
 
     runtime::AgentDependencies dependencies;
     dependencies.services = std::move(scope);
     dependencies.executor = std::move(executor);
-    return runtime::Agent(std::move(descriptor), std::move(dependencies), session_id);
+    return runtime::Agent(std::move(descriptor), MakeProfile(), std::move(dependencies), session_id);
 }
 
 runtime::AgentProfile AgentFactory::MakeProfile() const

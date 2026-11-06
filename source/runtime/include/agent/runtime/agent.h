@@ -30,9 +30,6 @@ struct AgentDescriptor
     std::string name;
     std::string version;
 
-    // 创建时默认配置；运行期可变配置归 AgentSession
-    AgentProfile default_profile;
-
     // 能力声明
     std::vector<std::string> capabilities;
 };
@@ -50,11 +47,12 @@ struct AgentDependencies
     std::shared_ptr<AgentExecutor> executor;
 };
 
-/// Agent = 身份/配置 + 独立会话 + 执行策略 + Agent 级服务。
+/// Agent = 身份 + 初始配置 + 独立会话 + 执行策略 + Agent 级服务。
 class Agent
 {
   public:
-    Agent(AgentDescriptor descriptor, AgentDependencies dependencies, std::string session_id = {});
+    Agent(AgentDescriptor descriptor, AgentProfile initial_profile, AgentDependencies dependencies,
+          std::string session_id = {});
 
     AgentRunResult Send(const std::string& user_input, const RunOptions& options = {});
     AgentRunResult Send(const std::string& user_input, std::stop_token stop_token);

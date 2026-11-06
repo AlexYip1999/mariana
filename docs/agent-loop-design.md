@@ -25,7 +25,7 @@ flowchart TD
 
 ### 配置与依赖所有权
 
-- `AgentDescriptor::default_profile` 是不可变的创建默认值；唯一可变运行配置由 `AgentSession` 持有。`Agent::Profile()`、`History()` 和 `Session::Records()` 返回快照，外部不能通过引用修改内部状态。
+- `AgentDescriptor` 只保存身份/名称/版本/能力；初始 profile 作为 `Agent` 构造参数传入，唯一可变运行配置由 `AgentSession` 持有。`Agent::Profile()`、`History()` 和 `Session::Records()` 返回快照，外部不能通过引用修改内部状态。
 - `SetProfile` 同步更新历史中的 System 消息；`Reconfigure(profile, executor)` 在空闲时一起切换配置和执行器。`Agent::Dependencies()` 返回当前执行器快照，不保留过期执行器。
 - `RunnerDependencies` 必须显式传入 model、tools、tool policy、context policy、output policy、scheduler、systems，缺失时构造失败。默认策略只在 host 组合根选择，Runner 不再读取 `ServiceRegistry`。
 - Session 拥有 executor，Runner 拥有依赖，`OpenAiChatModel` 拥有 transport，全部使用 `shared_ptr`。`ServiceRegistry` 也持有父 registry 的共享所有权；该可选宿主注册表须在发布到工作线程前完成配置，不支持并发修改。
@@ -76,7 +76,7 @@ flowchart TD
 
 ### 接口迁移
 
-`descriptor.profile` 改为 `descriptor.default_profile`；`AgentRunner(model, services)` 改为 `AgentRunner(RunnerDependencies)`；Session/Model 构造接收拥有所有权的 `shared_ptr`。`ChatRequest::stop_token` 迁移到 `call.stop_token`，自定义 `Tool::Execute` 接收 `const CallContext&`，`AgentExecutor::RunTurn` 接收 runtime `RunContext`；运行结果的 `.ok` 改为 `.Ok()`。`AgentSystem` 阶段回调保持不变，观察者异常被隔离。
+`Agent` 构造参数改为 descriptor + initial profile + dependencies；descriptor 不再持有 profile。`AgentRunner(model, services)` 改为 `AgentRunner(RunnerDependencies)`；Session/Model 构造接收拥有所有权的 `shared_ptr`。`ChatRequest::stop_token` 迁移到 `call.stop_token`，自定义 `Tool::Execute` 接收 `const CallContext&`，`AgentExecutor::RunTurn` 接收 runtime `RunContext`；运行结果的 `.ok` 改为 `.Ok()`。`AgentSystem` 阶段回调保持不变，观察者异常被隔离。
 
 ## 1. 背景
 
@@ -822,14 +822,14 @@ struct AgentDescriptor
     AgentId id;
     std::string name;
     std::string version;
-    AgentProfile default_profile;
     std::vector<std::string> capabilities;
 };
 
 class Agent
 {
   public:
-    Agent(AgentDescriptor descriptor, AgentDependencies dependencies, std::string session_id = {});
+    Agent(AgentDescriptor descriptor, AgentProfile initial_profile,
+          AgentDependencies dependencies, std::string session_id = {});
 
     AgentRunResult Send(const std::string& input, const RunOptions& options = {});
     AgentRunResult Send(const std::string& input, std::stop_token stop_token);

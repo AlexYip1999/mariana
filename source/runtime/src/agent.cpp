@@ -35,10 +35,11 @@ AgentSession MakeSession(const std::shared_ptr<AgentScope>& scope, AgentDependen
 
 } // namespace
 
-Agent::Agent(AgentDescriptor descriptor, AgentDependencies dependencies, std::string session_id)
+Agent::Agent(AgentDescriptor descriptor, AgentProfile initial_profile, AgentDependencies dependencies,
+             std::string session_id)
     : m_descriptor(std::move(descriptor))
     , m_scope(dependencies.services ? std::move(dependencies.services) : std::make_shared<AgentScope>())
-    , m_session(MakeSession(m_scope, std::move(dependencies), m_descriptor.default_profile, std::move(session_id)))
+    , m_session(MakeSession(m_scope, std::move(dependencies), std::move(initial_profile), std::move(session_id)))
 {}
 
 AgentRunResult Agent::Send(const std::string& user_input, const RunOptions& options)

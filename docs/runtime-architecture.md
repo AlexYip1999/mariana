@@ -56,7 +56,7 @@ hosts → runtime / plugins / integrations → core
 
 | 对象 | 职责 | 不负责 |
 |---|---|---|
-| `AgentDescriptor` | 身份、名称、版本、能力、默认配置 | 可变运行状态 |
+| `AgentDescriptor` | 身份、名称、版本、能力 | 可变运行状态 / profile |
 | `AgentScope` | Agent 私有服务作用域（ServiceRegistry child） | 跨 Agent 共享 |
 | `AgentDependencies` | AgentScope + executor | 单次 Turn 状态 |
 | `Agent` | 身份 + Session + AgentScope + 对外 `Send/ClearHistory/SessionId` | 具体 ReAct 循环 |
@@ -86,8 +86,8 @@ Session = 当前配置 + 历史 + executor + 执行记录 + Turn 事务
 ```
 
 - `AgentScope` 是 HostScope 的 child；Agent 持有非空 scope（缺省时创建空 scope）；
-- `AgentDescriptor::default_profile` 不可变；
-- 唯一可变配置由 `AgentSession` 持有；
+- 初始 profile 由 `Agent` 构造参数传入；descriptor 只保留身份/能力；
+- `AgentDescriptor` 不持有运行时 profile；唯一可变配置由 `AgentSession` 持有；
 - `Agent::Profile()`、`History()`、`Dependencies()` 返回快照；
 - `Agent::SessionId()` 暴露会话关联，供 Host/Router 使用；
 - 切换配置/工作区通过 `Reconfigure` 创建新 executor，不在运行中直接改历史。

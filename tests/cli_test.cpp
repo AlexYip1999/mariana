@@ -156,7 +156,6 @@ agent::runtime::Agent MakeAgent(const agent::hosts::cli::CliConfig& config, agen
     descriptor.id.value = "cli";
     descriptor.name = "agent-cli";
     descriptor.version = "test";
-    descriptor.default_profile = profile;
 
     agent::runtime::AgentDependencies agent_services;
     agent_services.services = std::shared_ptr<agent::runtime::ServiceRegistry>(&services,
@@ -167,7 +166,7 @@ agent::runtime::Agent MakeAgent(const agent::hosts::cli::CliConfig& config, agen
                                                                              [](agent::runtime::AgentExecutor*)
                                                                              {
                                                                              });
-    return agent::runtime::Agent(std::move(descriptor), agent_services);
+    return agent::runtime::Agent(std::move(descriptor), std::move(profile), agent_services);
 }
 
 } // namespace
