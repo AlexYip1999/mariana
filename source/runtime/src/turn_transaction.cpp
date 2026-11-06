@@ -17,7 +17,9 @@ bool ShouldRollback(const RunOutcome& outcome)
         return true;
     }
     return outcome.error_code == RunErrorCode::DeadlineExceeded || outcome.error_code == RunErrorCode::InternalError ||
-           outcome.error_code == RunErrorCode::InvalidInput || outcome.error_code == RunErrorCode::InvalidConfiguration;
+           outcome.error_code == RunErrorCode::InvalidInput ||
+           outcome.error_code == RunErrorCode::InvalidConfiguration ||
+           outcome.error_code == RunErrorCode::ContextFailure;
 }
 
 bool HasSystemMessage(const core::Conversation& conversation)

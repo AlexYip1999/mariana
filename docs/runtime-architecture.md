@@ -352,6 +352,11 @@ Game Event
 
 `ToolScheduler` 是留给 UE 主线程工具的接入点；本阶段不实现 UE 插件。
 
+`ContextProvider` 由 Host 注入 `RunnerDependencies.context_provider`：AgentRunner 在每轮第一次模型调用前
+调用一次，结果作为一条 System 消息注入当前轮输入之前；Provider 失败按 fail-closed 处理
+（`RunErrorCode::ContextFailure`，历史回滚）。契约、预算与线程约束见
+[`context-provider.md`](context-provider.md)，UE 侧最小实现见 [`hosts-unreal.md`](hosts-unreal.md)。
+
 ### Router / Worker
 
 Router/Worker 不进入 core：

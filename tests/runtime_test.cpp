@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "agent/core/chat_model.h"
+#include "agent/core/context.h"
 #include "agent/core/tracer.h"
 #include "agent/runtime/agent.h"
 #include "agent/runtime/agent_runner.h"
@@ -122,6 +123,19 @@ class DenyAllToolPolicy : public agent::runtime::ToolPolicy
         reason = "denied by test";
         return false;
     }
+};
+
+class FakeContextProvider final : public agent::core::ContextProvider
+{
+  public:
+    agent::core::AgentContextResult BuildContext(const agent::core::AgentContextRequest& request) override
+    {
+        requests.push_back(request);
+        return result;
+    }
+
+    std::vector<agent::core::AgentContextRequest> requests;
+    agent::core::AgentContextResult result;
 };
 
 class FakeTool : public agent::core::Tool
@@ -955,7 +969,7 @@ TEST_CASE("tool registry stores governance descriptors")
     CHECK(error.find("descriptor name mismatch") != std::string::npos);
 }
 
-TEST_CASE("composition validation rejects side-effecting tools without approval")
+TEST_CASE("composition validation requires explicit side-effect authorization")
 {
     FakeChatModel model;
     auto services = MakeServices();
@@ -965,15 +979,173 @@ TEST_CASE("composition validation rejects side-effecting tools without approval"
     agent::runtime::ToolDescriptor descriptor;
     descriptor.name = "write_file";
     descriptor.side_effects = true;
+    descriptor.access_scope = agent::runtime::ToolAccessScope::Write;
     descriptor.approval = agent::runtime::ToolApprovalMode::NotRequired;
     REQUIRE(tools->Register(std::make_shared<FakeTool>("write_file"), descriptor, error));
     dependencies.tools = tools;
 
     agent::runtime::AgentProfile profile;
     profile.tool_names = {"write_file"};
+
+    // 默认策略不声明副作用授权：组合校验必须拒绝。
+    dependencies.tool_policy = std::make_shared<DenyAllToolPolicy>();
+    const agent::runtime::CompositionValidation denied = agent::runtime::ValidateComposition(dependencies, profile);
+    CHECK_FALSE(denied.Ok());
+    CHECK(denied.Describe().find("tool_policy") != std::string::npos);
+
+    dependencies.tool_policy =
+        std::make_shared<agent::runtime::AllowListToolPolicy>(std::vector<std::string>{"write_file"}, true);
+    const agent::runtime::CompositionValidation allowed = agent::runtime::ValidateComposition(dependencies, profile);
+    CHECK(allowed.Ok());
+}
+
+TEST_CASE("composition validation rejects tools that require approval")
+{
+    FakeChatModel model;
+    auto services = MakeServices();
+    auto dependencies = agent::tests::MakeRunnerDependencies(model, services);
+    auto tools = std::make_shared<agent::runtime::ToolRegistry>();
+    std::string error;
+    agent::runtime::ToolDescriptor descriptor;
+    descriptor.name = "write_file";
+    descriptor.side_effects = true;
+    descriptor.access_scope = agent::runtime::ToolAccessScope::Write;
+    descriptor.approval = agent::runtime::ToolApprovalMode::Required;
+    REQUIRE(tools->Register(std::make_shared<FakeTool>("write_file"), descriptor, error));
+    dependencies.tools = tools;
+    dependencies.tool_policy =
+        std::make_shared<agent::runtime::AllowListToolPolicy>(std::vector<std::string>{"write_file"}, true);
+
+    agent::runtime::AgentProfile profile;
+    profile.tool_names = {"write_file"};
     const agent::runtime::CompositionValidation validation = agent::runtime::ValidateComposition(dependencies, profile);
     CHECK_FALSE(validation.Ok());
     CHECK(validation.Describe().find("approval") != std::string::npos);
+}
+
+TEST_CASE("allowlist policy denies unlisted tools")
+{
+    const agent::runtime::AllowListToolPolicy policy(std::vector<std::string>{"read_file"});
+    agent::core::ToolCall allowed;
+    allowed.name = "read_file";
+    agent::core::ToolCall denied;
+    denied.name = "write_file";
+    std::string reason;
+    CHECK(policy.Allow(allowed, reason));
+    CHECK_FALSE(policy.Allow(denied, reason));
+    CHECK(reason.find("allowlist") != std::string::npos);
+    CHECK_FALSE(policy.AllowsSideEffects());
+}
+
+TEST_CASE("context provider payload is injected before the current user input")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "hello";
+
+    auto services = MakeServices();
+    auto dependencies = agent::tests::MakeRunnerDependencies(model, services);
+    auto provider = std::make_shared<FakeContextProvider>();
+    provider->result.context_json = R"({"time":"morning"})";
+    dependencies.context_provider = provider;
+    agent::runtime::AgentRunner runner(dependencies);
+
+    agent::core::Conversation conversation;
+    agent::runtime::AgentProfile profile;
+    profile.system_prompt = "be brief";
+    const agent::runtime::AgentRunResult result = agent::tests::RunTurnForTest(runner, profile, conversation, "hello");
+
+    CHECK(result.Ok());
+    REQUIRE(provider->requests.size() == 1);
+    CHECK(provider->requests[0].user_input == "hello");
+    CHECK_FALSE(provider->requests[0].session_id.empty());
+    CHECK_FALSE(provider->requests[0].run_id.empty());
+    REQUIRE(model.requests.size() == 1);
+
+    const std::vector<agent::core::ChatMessage>& messages = model.requests[0].messages;
+    std::size_t context_index = messages.size();
+    std::size_t user_index = messages.size();
+    for (std::size_t index = 0; index < messages.size(); ++index)
+    {
+        const bool is_context = messages[index].role == agent::core::ChatRole::System &&
+                                messages[index].content.find("morning") != std::string::npos;
+        const bool is_current_input =
+            messages[index].role == agent::core::ChatRole::User && messages[index].content == "hello";
+        if (is_context)
+        {
+            context_index = index;
+        }
+        if (is_current_input)
+        {
+            user_index = index;
+        }
+    }
+    REQUIRE(context_index < messages.size());
+    REQUIRE(user_index < messages.size());
+    CHECK(context_index < user_index);
+}
+
+TEST_CASE("context provider failure fails closed and rolls back the turn")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "hello";
+
+    auto services = MakeServices();
+    auto dependencies = agent::tests::MakeRunnerDependencies(model, services);
+    auto provider = std::make_shared<FakeContextProvider>();
+    provider->result.ok = false;
+    provider->result.error = "world snapshot unavailable";
+    dependencies.context_provider = provider;
+    agent::runtime::AgentRunner runner(dependencies);
+
+    agent::core::Conversation conversation;
+    agent::runtime::AgentProfile profile;
+    profile.system_prompt = "be brief";
+    const agent::runtime::AgentRunResult result = agent::tests::RunTurnForTest(runner, profile, conversation, "hello");
+
+    CHECK(result.status == agent::runtime::RunStatus::Failed);
+    CHECK(result.error_code == agent::runtime::RunErrorCode::ContextFailure);
+    CHECK(result.error.find("world snapshot unavailable") != std::string::npos);
+    CHECK(model.requests.empty());
+    CHECK(conversation.messages.empty());
+}
+
+TEST_CASE("provider context respects max_context_chars budget")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "done";
+
+    auto services = MakeServices();
+    auto dependencies = agent::tests::MakeRunnerDependencies(model, services);
+    auto provider = std::make_shared<FakeContextProvider>();
+    provider->result.context_json = std::string(512, 'x');
+    dependencies.context_provider = provider;
+    agent::runtime::AgentRunner runner(dependencies);
+
+    agent::core::Conversation conversation;
+    agent::runtime::AgentProfile profile;
+    profile.system_prompt = "be brief";
+    profile.max_context_chars = 80;
+    const agent::runtime::AgentRunResult result = agent::tests::RunTurnForTest(runner, profile, conversation, "hello");
+
+    CHECK(result.Ok());
+    REQUIRE(provider->requests.size() == 1);
+    CHECK(provider->requests[0].max_context_chars > 0);
+    REQUIRE(model.requests.size() == 1);
+
+    std::size_t injected_size = 0;
+    for (const agent::core::ChatMessage& message : model.requests[0].messages)
+    {
+        if (message.role == agent::core::ChatRole::System && message.content.find("xxxx") != std::string::npos)
+        {
+            injected_size = message.content.size();
+        }
+    }
+    REQUIRE(injected_size > 0);
+    // 已用消息（"be brief" + "hello" = 13 字符）之外的全部内容都必须落在 80 字符预算内。
+    CHECK(injected_size <= 80 - 13);
 }
 
 TEST_CASE("tool registry rejects invalid registrations")
@@ -996,4 +1168,31 @@ TEST_CASE("tool registry rejects invalid registrations")
     CHECK_FALSE(registry.Register(duplicate, error));
     CHECK(error.find("duplicate tool name") != std::string::npos);
     CHECK(registry.Size() == 1);
+}
+
+TEST_CASE("host assigned run id flows through the turn result")
+{
+    FakeChatModel model;
+    model.response.ok = true;
+    model.response.content = "hello";
+
+    auto services = MakeServices();
+    auto dependencies = agent::tests::MakeRunnerDependencies(model, services);
+    agent::runtime::AgentRunner runner(dependencies);
+
+    agent::runtime::AgentProfile profile;
+    profile.system_prompt = "be brief";
+    agent::runtime::RunOptions options;
+    options.run_id = "run-42";
+    const agent::runtime::RunContext context = agent::runtime::RunContext::Create(profile, "session-42", options);
+    CHECK(context.session_id == "session-42");
+    CHECK(context.run_id == "run-42");
+
+    agent::core::Conversation conversation;
+    agent::core::SystemRegistry systems;
+    const agent::runtime::TurnExecution execution =
+        agent::runtime::ExecuteTurn(profile, conversation, runner, "hello", context, systems);
+    CHECK(execution.result.Ok());
+    CHECK(execution.result.run_id == "run-42");
+    CHECK(execution.result.session_id == "session-42");
 }

@@ -356,7 +356,8 @@ UI EventQueue     Notifier 只投递，GT 消费
 - Agent 销毁顺序：request_stop → drain GT 任务 → 等待 in-flight Send → close trace → erase；
 - 迟到回调用 `{session_id, run_id, generation}` 丢弃；
 - 取消不撤销副作用，但必须保留 `ToolExecutionRecord`；
-- 审批未设计前禁止开放写工具。
+- 副作用/越权工具（`side_effects=true` 或 `access_scope != Read`）必须由 Host 的
+  `ToolPolicy::AllowsSideEffects()` 显式授权；`approval != NotRequired` 的工具在审批机制落地前仍禁用。
 
 ### 7.4 SendAsync
 
@@ -440,6 +441,9 @@ MVP 只消费：
 - `side_effects`
 - `access_scope`
 - `approval`
+
+当前实现（F1）：`ValidateComposition` 已接入 `ToolPolicy::AllowsSideEffects()`——副作用/越权工具需要 Host
+显式放开，`approval=Required/Async` 仍拒绝执行；审批回调/UI 留待后续。
 
 `idempotency`、`version`、`config_schema` 先声明/暂不消费；`timeout` 用 CallContext deadline 表达。
 
@@ -569,6 +573,10 @@ PR5  ToolDescriptor + ValidateComposition
 - 取消/超时/预算 DoD 补测；
 - ToolCatalog 工具元数据深化；
 - 观察/追踪契约稳定。
+
+> 当前进展（F1 进行中）：单 Provider 已接入 `RunnerDependencies.context_provider`（每轮注入、失败
+> fail-closed、预算裁剪）；`ToolPolicy::AllowsSideEffects` 副作用授权已接入组合校验；剩余 Memory/摘要、
+> eval、Validator。ContextPipeline（多 Provider 顺序注入）与强类型上下文留待后续。
 
 ### F2：B1 UE Editor
 

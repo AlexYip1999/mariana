@@ -1,0 +1,17 @@
+Mariana Heart (agent-core)
+Copyright 2026 AlexYip1999
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software developed by third parties:
+
+- nlohmann/json 3.11.2 (MIT License)
+  https://github.com/nlohmann/json
+  Vendored as a single header under third_party/nlohmann/.
+
+- doctest 2.4.6 (MIT License)
+  https://github.com/doctest/doctest
+  Vendored as a single header under third_party/doctest/.
+
+Third-party components remain under their own licenses; see the license
+headers in the corresponding third_party/ files.

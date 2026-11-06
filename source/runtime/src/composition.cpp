@@ -15,6 +15,16 @@ bool IsSupportedThreadAffinity(const std::string& affinity)
     return affinity.empty() || affinity == "inline" || affinity == "worker" || affinity == "host";
 }
 
+bool RequiresSideEffectAuthorization(const ToolDescriptor& descriptor)
+{
+    return descriptor.side_effects || descriptor.access_scope != ToolAccessScope::Read;
+}
+
+bool RequiresApproval(const ToolDescriptor& descriptor)
+{
+    return descriptor.approval != ToolApprovalMode::NotRequired;
+}
+
 } // namespace
 
 CompositionValidation ValidateComposition(const RunnerDependencies& dependencies, const AgentProfile& profile)
@@ -82,10 +92,13 @@ CompositionValidation ValidateComposition(const RunnerDependencies& dependencies
             add("thread_affinity",
                 "unsupported thread_affinity '" + descriptor->thread_affinity + "' for tool " + name);
         }
-        if (descriptor->side_effects || descriptor->access_scope != ToolAccessScope::Read ||
-            descriptor->approval != ToolApprovalMode::NotRequired)
+        if (RequiresApproval(*descriptor))
         {
-            add("approval", "side-effecting or approval-required tool is not executable yet: " + name);
+            add("approval", "tool requires approval but no approval mechanism is available: " + name);
+        }
+        else if (RequiresSideEffectAuthorization(*descriptor) && !dependencies.tool_policy->AllowsSideEffects())
+        {
+            add("tool_policy", "side-effecting or privileged tool requires ToolPolicy::AllowsSideEffects: " + name);
         }
     }
     return validation;

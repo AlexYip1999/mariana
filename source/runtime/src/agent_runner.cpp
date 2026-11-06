@@ -1,11 +1,13 @@
 #include "agent/runtime/agent_runner.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <exception>
 #include <set>
 #include <stdexcept>
 #include <utility>
 
+#include "agent/core/utf8.h"
 #include "agent/runtime/composition.h"
 #include "agent/runtime/system_notifier.h"
 #include "agent/runtime/turn_transaction.h"
@@ -14,6 +16,9 @@ namespace agent::runtime
 {
 namespace
 {
+
+constexpr const char* kContextOpenTag = "<context>\n";
+constexpr const char* kContextCloseTag = "\n</context>";
 
 RunOutcome Decided(RunOutcome result, RunStatus status, RunErrorCode code, std::string error,
                    std::string content = std::string())
@@ -59,11 +64,116 @@ bool HasValidToolCalls(const std::vector<core::ToolCall>& calls)
     return true;
 }
 
+std::size_t EstimateMessageChars(const core::ChatMessage& message)
+{
+    std::size_t total = message.content.size() + message.tool_call_id.size();
+    for (const core::ToolCall& call : message.tool_calls)
+    {
+        total += call.id.size() + call.name.size() + call.arguments_json.size();
+    }
+    return total;
+}
+
+std::size_t EstimateMessagesChars(const std::vector<core::ChatMessage>& messages)
+{
+    std::size_t total = 0;
+    for (const core::ChatMessage& message : messages)
+    {
+        total += EstimateMessageChars(message);
+    }
+    return total;
+}
+
+std::size_t ContextWrapperChars()
+{
+    return std::string(kContextOpenTag).size() + std::string(kContextCloseTag).size();
+}
+
+/// 把 Provider JSON 包成一条 System 消息，插在最近一条 User（当前轮输入）之前。
+void InjectContextMessage(std::vector<core::ChatMessage>& messages, const std::string& context_json)
+{
+    if (context_json.empty())
+    {
+        return;
+    }
+    core::ChatMessage message;
+    message.role = core::ChatRole::System;
+    message.content = std::string(kContextOpenTag) + context_json + std::string(kContextCloseTag);
+    for (std::size_t index = messages.size(); index > 0; --index)
+    {
+        if (messages[index - 1].role == core::ChatRole::User)
+        {
+            messages.insert(messages.begin() + static_cast<std::ptrdiff_t>(index - 1), std::move(message));
+            return;
+        }
+    }
+    messages.push_back(std::move(message));
+}
+
+/// 每轮调用一次 ContextProvider；失败返回 false（fail-closed），由调用方转成 RunOutcome。
+bool BuildProviderContext(const RunnerDependencies& dependencies, const AgentProfile& profile,
+                          const core::Conversation& conversation, const std::string& user_input,
+                          const RunContext& context, std::string& context_json, std::string& error)
+{
+    if (!dependencies.context_provider || !dependencies.context_policy)
+    {
+        return true;
+    }
+
+    std::size_t payload_budget = 0;
+    if (profile.max_context_chars > 0)
+    {
+        const auto prepared = dependencies.context_policy->Prepare(conversation.messages, profile.max_context_chars);
+        const std::size_t used = EstimateMessagesChars(prepared);
+        const std::size_t remaining = used < profile.max_context_chars ? profile.max_context_chars - used : 0;
+        if (remaining <= ContextWrapperChars())
+        {
+            // 没有剩余上下文预算：跳过 Provider，不注入。
+            return true;
+        }
+        payload_budget = remaining - ContextWrapperChars();
+    }
+
+    core::AgentContextRequest request;
+    request.session_id = context.session_id;
+    request.run_id = context.run_id;
+    request.user_input = user_input;
+    request.max_context_chars = payload_budget;
+    request.call = context.call;
+
+    core::AgentContextResult result;
+    try
+    {
+        result = dependencies.context_provider->BuildContext(request);
+    }
+    catch (const std::exception& provider_error)
+    {
+        error = std::string("context provider threw: ") + provider_error.what();
+        return false;
+    }
+    catch (...)
+    {
+        error = "context provider threw an unknown exception";
+        return false;
+    }
+    if (!result.ok)
+    {
+        error = result.error.empty() ? "context provider failed" : result.error;
+        return false;
+    }
+    if (profile.max_context_chars > 0 && result.context_json.size() > payload_budget)
+    {
+        result.context_json.resize(core::Utf8PrefixSize(result.context_json, payload_budget));
+    }
+    context_json = std::move(result.context_json);
+    return true;
+}
+
 } // namespace
 
 static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentProfile& profile,
                            TurnWorkspace& workspace, const RunContext& context, const SystemNotifier& notifier,
-                           RunOutcome& result)
+                           const std::string& provider_context, RunOutcome& result)
 {
     core::Conversation& conversation = workspace.Conversation();
     const auto specs = dependencies.tools->SpecsFor(profile.tool_names);
@@ -82,6 +192,7 @@ static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentPr
         request.max_tokens = profile.max_tokens;
         request.tools = specs;
         request.messages = dependencies.context_policy->Prepare(conversation.messages, profile.max_context_chars);
+        InjectContextMessage(request.messages, provider_context);
         notifier.ModelRequested(request);
         if (context.Interruption() != RunErrorCode::None)
         {
@@ -241,7 +352,20 @@ RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& work
             }
             else
             {
-                outcome = RunSteps(m_dependencies, profile, workspace, context, notifier, outcome);
+                std::string provider_context;
+                std::string provider_error;
+                const bool context_ok = BuildProviderContext(m_dependencies, profile, workspace.Conversation(),
+                                                             user_input, context, provider_context, provider_error);
+                if (!context_ok)
+                {
+                    outcome = {RunStatus::Failed, RunErrorCode::ContextFailure,
+                               "context provider failed: " + provider_error};
+                }
+                else
+                {
+                    outcome =
+                        RunSteps(m_dependencies, profile, workspace, context, notifier, provider_context, outcome);
+                }
             }
         }
     }

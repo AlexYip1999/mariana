@@ -37,6 +37,9 @@ struct RunOptions
 {
     std::stop_token stop_token;
     std::optional<std::chrono::milliseconds> timeout;
+    /// 可选：Host 预分配的 run_id；为空时由 runtime 生成。
+    /// Host 可用它在 Send 之前构造 RunHandle，便于做迟到结果抑制。
+    std::string run_id;
 };
 
 } // namespace agent::runtime

@@ -19,6 +19,17 @@
       "cacheVariables": {
         "AGENT_CORE_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "vs2022-ue",
+      "displayName": "Visual Studio 2022 + MSVC 14.38 (UE 5.6 toolchain)",
+      "description": "Pin the MSVC toolset used by Unreal Engine 5.6 so static libraries are CRT/toolchain compatible.",
+      "inherits": "vs2022",
+      "binaryDir": "${sourceDir}/build/vs2022-ue",
+      "toolset": "v143,version=14.38.33130",
+      "cacheVariables": {
+        "CMAKE_SYSTEM_VERSION": "10.0.22621.0"
+      }
     }
   ],
   "buildPresets": [
@@ -31,6 +42,16 @@
       "name": "release",
       "configurePreset": "vs2022",
       "configuration": "Release"
+    },
+    {
+      "name": "debug-ue",
+      "configurePreset": "vs2022-ue",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release-ue",
+      "configurePreset": "vs2022-ue",
+      "configuration": "Release"
     }
   ],
   "testPresets": [
@@ -38,6 +59,22 @@
       "name": "debug",
       "configurePreset": "vs2022",
       "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "debug-ue",
+      "configurePreset": "vs2022-ue",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release-ue",
+      "configurePreset": "vs2022-ue",
+      "configuration": "Release",
       "output": {
         "outputOnFailure": true
       }

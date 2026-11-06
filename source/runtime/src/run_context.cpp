@@ -18,7 +18,7 @@ RunContext RunContext::Create(const AgentProfile& profile, const std::string& se
     }
     RunContext context;
     context.session_id = session_id.empty() ? ExecutionId::NewSession() : session_id;
-    context.run_id = ExecutionId::NewRun();
+    context.run_id = options.run_id.empty() ? ExecutionId::NewRun() : options.run_id;
     context.call.stop_token = options.stop_token;
     context.call.deadline = std::chrono::steady_clock::now() + timeout;
     context.budget.max_model_calls = profile.max_steps;

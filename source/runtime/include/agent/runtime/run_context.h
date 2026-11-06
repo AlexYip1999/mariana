@@ -54,6 +54,7 @@ enum class RunErrorCode
     ToolDenied,
     ToolFailure,
     InvalidToolCall,
+    ContextFailure,
     InternalError,
 };
 
@@ -91,6 +92,8 @@ inline const char* ToString(RunErrorCode value)
         return "ToolFailure";
     case RunErrorCode::InvalidToolCall:
         return "InvalidToolCall";
+    case RunErrorCode::ContextFailure:
+        return "ContextFailure";
     case RunErrorCode::InternalError:
         return "InternalError";
     }

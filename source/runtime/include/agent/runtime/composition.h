@@ -29,6 +29,8 @@ struct CompositionValidation
 };
 
 /// 构建期/运行前组合校验：依赖完整性、tool 元数据、线程亲和与副作用审批。
+/// 副作用/越权访问工具要求 ToolPolicy 显式 AllowsSideEffects()；approval != NotRequired 的工具在
+/// 审批机制落地前仍不可执行。
 CompositionValidation ValidateComposition(const RunnerDependencies& dependencies, const AgentProfile& profile);
 
 } // namespace agent::runtime

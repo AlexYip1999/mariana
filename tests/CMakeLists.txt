@@ -48,6 +48,12 @@ add_executable(agent_trace_tests
 )
 target_link_libraries(agent_trace_tests PRIVATE agent_traces agent_third_party)
 
+add_executable(agent_host_reference_tests
+    host_reference_test.cpp
+)
+target_include_directories(agent_host_reference_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(agent_host_reference_tests PRIVATE agent_host_reference agent_third_party)
+
 if(WIN32)
     add_executable(agent_transport_winhttp_tests
         winhttp_transport_test.cpp
@@ -65,6 +71,7 @@ set_target_properties(agent_runtime_tests PROPERTIES FOLDER "Tests/Runtime")
 set_target_properties(agent_tools_tests PROPERTIES FOLDER "Tests/Plugins/Tools")
 set_target_properties(agent_cli_tests PROPERTIES FOLDER "Tests/Hosts")
 set_target_properties(agent_trace_tests PROPERTIES FOLDER "Tests/Plugins/Traces")
+set_target_properties(agent_host_reference_tests PROPERTIES FOLDER "Tests/Hosts")
 if(WIN32)
     set_target_properties(agent_transport_winhttp_tests PROPERTIES FOLDER "Tests/Integrations/Transport")
 endif()
@@ -77,6 +84,7 @@ add_test(NAME agent_runtime_tests COMMAND agent_runtime_tests)
 add_test(NAME agent_tools_tests COMMAND agent_tools_tests)
 add_test(NAME agent_cli_tests COMMAND agent_cli_tests)
 add_test(NAME agent_trace_tests COMMAND agent_trace_tests)
+add_test(NAME agent_host_reference_tests COMMAND agent_host_reference_tests)
 if(WIN32)
     add_test(NAME agent_transport_winhttp_tests COMMAND agent_transport_winhttp_tests)
     set_tests_properties(agent_transport_winhttp_tests PROPERTIES TIMEOUT 30)

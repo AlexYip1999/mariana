@@ -6,6 +6,7 @@
 
 #include "agent/core/agent_system.h"
 #include "agent/core/chat_model.h"
+#include "agent/core/context.h"
 #include "agent/core/conversation.h"
 #include "agent/core/system_registry.h"
 #include "agent/runtime/agent_executor.h"
@@ -31,9 +32,11 @@ struct RunnerDependencies
     std::shared_ptr<const ContextPolicy> context_policy;
     std::shared_ptr<const ToolOutputPolicy> tool_output_policy;
 
-    // 宿主线程与观察
+    // 宿主线程、观察与上下文
     std::shared_ptr<ToolScheduler> tool_scheduler;
     std::shared_ptr<core::SystemRegistry> systems;
+    /// 可选：每轮模型调用前构建宿主上下文（世界快照/检索）；为空表示不注入。
+    std::shared_ptr<core::ContextProvider> context_provider;
 };
 
 /// 默认 ReAct 执行器：模型请求 → tool_calls → 执行工具 → 继续，直到最终回答或 max_steps。

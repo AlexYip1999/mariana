@@ -35,6 +35,9 @@
 - 观察者回调异常不会中断 Agent 执行；工具授权必须由 `ToolPolicy` 等策略执行，不能依赖日志回调抛异常。
 - 不要在不可信仓库中运行 `agent-cli` 并同时持有高价值环境变量；把 key 放在独立进程环境或代理网关。
 - 工具输出和配置文件内容都可能被 prompt injection 利用；授权动作（写文件、执行命令）必须走独立审批，不要只靠模型判断。
+- 副作用/越权工具（`side_effects=true` 或 `access_scope != Read`）必须由 Host 的 `ToolPolicy::AllowsSideEffects()`
+  显式授权，组合校验才放行；`approval=Required/Async` 的工具在审批回调/UI 落地前仍拒绝执行。
+  仅靠模型判断或「默认 AllowAll」会放大 prompt injection 的影响面，Host 应使用 `AllowListToolPolicy` 等最小授权策略。
 
 ## 为什么不做"自研加密模块"
 

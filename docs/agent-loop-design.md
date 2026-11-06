@@ -427,13 +427,15 @@ class ContextProvider
   public:
     virtual ~ContextProvider() = default;
 
-    virtual std::string BuildContext(const AgentContextRequest& request) = 0;
+    virtual AgentContextResult BuildContext(const AgentContextRequest& request) = 0;
 };
 ```
 
 - 每个应用注册自己的 ContextProvider；
-- `AgentProfile` 选择工具集、ContextProvider、执行器和提示词；
-- 上下文先用 JSON 字符串承载，避免 core 绑定具体领域结构。
+- Provider 由 Host 组合根注入到 `RunnerDependencies.context_provider`（每 Agent 一个 Runner 即可按 Agent 定制）；
+- `AgentProfile` 选择工具集、执行器和提示词；上下文实例通过 Runner 依赖注入；
+- 上下文先用 JSON 字符串承载，避免 core 绑定具体领域结构；注入位置、预算与失败语义见
+  [`context-provider.md`](context-provider.md)。
 
 ### 5.6 未来：低代码 Flow 层
 
@@ -927,7 +929,8 @@ class Agent
 3. `Tool` 接口放 core（JSON 字符串）是否合适，还是放到独立的 tools 接口库；（已解决：core 只放协议，治理元数据在 runtime）
 4. 第一版是否允许一次响应多个 `tool_calls` 并行执行（建议先串行）；（已解决：先串行）
 5. `AgentProfile` 是否包含 model/temperature，还是复用 adapter 配置；（已解决：profile 持有）
-6. `ContextProvider` 的位置与数据类型（JSON 字符串 vs 强类型结构）；（仍开放，F1）
+6. `ContextProvider` 的位置与数据类型（JSON 字符串 vs 强类型结构）；（已定：`RunnerDependencies.context_provider`
+   + JSON 字符串，单 Provider 注入；ContextPipeline/强类型留后续）
 7. trace 文件格式与落盘位置；（已解决：JSONL + traces/）
 8. 启动参数与交互命令的边界（启动只保留 bootstrap，其他用命令）；（已解决）
 9. Flow DSL 从什么时候开始设计（建议 A3 之后）；（仍冻结）

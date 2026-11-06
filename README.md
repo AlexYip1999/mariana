@@ -5,9 +5,15 @@
 仓库：[AlexYip1999/mariana](https://github.com/AlexYip1999/mariana)
 本地目录为 `agent-core`；代码命名空间暂用 `agent::`，后续统一改名。
 
-**当前状态：A2.5（F0 运行时收口）已完成，A3（F1）进行中** —— Windows 已接入临时 WinHTTP 传输；已实现 `Agent`/`AgentSession`/`AgentRunner`、scoped `ServiceRegistry`、ReAct 工具循环、`read_file`、取消/预算/并发硬化、Turn 事务、结构化 TurnEvent、ToolDescriptor、组合校验、CallError/RunErrorCode 分层、HostServices/AgentFactory/RunLoop、metrics、trace、CLI `CommandRegistry` 交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI。
+**当前状态：A2.5（F0 运行时收口）已完成，A3（F1）进行中** —— Windows 已接入临时 WinHTTP 传输；已实现 `Agent`/`AgentSession`/`AgentRunner`、scoped `ServiceRegistry`、ReAct 工具循环、`read_file`、取消/预算/并发硬化、Turn 事务、结构化 TurnEvent、ToolDescriptor、组合校验、CallError/RunErrorCode 分层、HostServices/AgentFactory/RunLoop、metrics、trace、CLI `CommandRegistry` 交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI + 参考 Host Adapter。
 
-仓库里**还没有 UE 插件**；`hosts/unreal/` 只是规划。
+F1 进展：`ContextProvider` 已接入 Runner（`RunnerDependencies.context_provider`，每轮注入上下文、失败 fail-closed）；
+`ToolDescriptor` 副作用授权已接入组合校验（`ToolPolicy::AllowsSideEffects`）；新增静态库安装规则、版本/ABI 校验
+与 Host 接入文档（见 [构建与交付](docs/build-delivery.md)、[UE 接入指南](docs/hosts-unreal.md)、
+[ContextProvider 契约](docs/context-provider.md)、[API 参考](docs/api.md)）。剩余：Memory/摘要、Eval、Validator。
+
+仓库里**还没有 UE 插件**；`hosts/unreal/` 只是规划。`source/hosts/reference/` 是纯 C++ 参考 Host Adapter
+（SendAsync/worker、RunHandle/generation、主线程 ToolScheduler、迟到结果抑制），UE 侧可按它对齐实现。
 
 ## 目录
 
@@ -23,6 +29,7 @@
 | `source/plugins/traces/` | JSONL trace 插件：默认开启，记录 turn/model/tool/usage，内容截断与 key 脱敏；usage 聚合与 trace viewer |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
 | `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，交互式；启动仅 `--help/--version/--config`，其他用命令） |
+| `source/hosts/reference/` | 纯 C++ 参考 Host Adapter：`SendAsync`/worker、`RunHandle`/generation、主线程 ToolScheduler、迟到结果抑制（UE 接入的对照实现） |
 | `tests/` | 单元测试（doctest） |
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
 | `third_party/` | 单头依赖（nlohmann/json、doctest） |
@@ -107,21 +114,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 - [Agent 循环设计](docs/agent-loop-design.md)
 - [运行时架构](docs/runtime-architecture.md)
 - [安全与密钥管理](docs/security.md)
+- [构建与交付（静态库 / 头文件）](docs/build-delivery.md)
+- [UE 宿主接入指南](docs/hosts-unreal.md)
+- [ContextProvider 契约](docs/context-provider.md)
+- [API 参考](docs/api.md)
 
 ## 下一步
 
 - 真实 API 联调：设置 `DEEPSEEK_API_KEY` 后启动 `agent-cli`，在交互提示符输入“读取 README.md 并总结”；
 - file tracer / usage 持久化已实现；继续验证真实服务下的错误处理与使用体验；
+- F1/A3 收尾：Memory 接口 + 摘要、eval/tasks + runner（验收 eval ≥ 7/10）、Validator、取消/预算 DoD 补测；
+- A2 余量只读工具：`list_dir` / `search_text`（写工具等审批机制落地后再开）；
 - 跨平台正式实现：把 `WinHttpTransport` 替换为 libcurl（接口不变，UE 宿主仍用 FHttpModule）；
-- 之后进入 F1/A3：ContextProvider、Memory、Eval。
+- UE 接入：按 [UE 宿主接入指南](docs/hosts-unreal.md) 在宿主工程实现 `FMarianaHttpTransport` + `UMarianaSubsystem`。
 
 CLI 的配置与用法见 [`source/hosts/cli/README.md`](source/hosts/cli/README.md)，共享默认见 [`resources/config.json`](resources/config.json)。
+
+## License
+
+项目使用 **Apache-2.0** 许可证，见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
+第三方组件按其各自许可证使用（见下一节）。
 
 ## 第三方
 
 - [nlohmann/json](https://github.com/nlohmann/json) 3.11.2（MIT），单头文件
 - [doctest](https://github.com/doctest/doctest) 2.4.6（MIT），单头文件
-
-## License
-
-项目许可证待定；第三方组件按其各自许可证使用（见 `third_party/`）。
