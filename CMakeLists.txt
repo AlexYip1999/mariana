@@ -42,6 +42,7 @@ if(AGENT_CORE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+add_subdirectory(source/eval)
 
 # 安装规则：提供给 UE 等外部宿主的静态库 + 公共头文件 + 交付文档。
 # CLI 宿主（agent-cli / agent_cli_lib）不安装；宿主无关库之外由 Host 自行实现 transport。

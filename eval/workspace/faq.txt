@@ -1,0 +1,4 @@
+FAQ_MARKER_7: the eval runner runs offline in mock mode and needs no network.
+
+Q: How do I run real mode?
+A: Set DEEPSEEK_API_KEY and pass --mode real.

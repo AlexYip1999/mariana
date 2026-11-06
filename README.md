@@ -10,7 +10,9 @@
 F1 进展：`ContextProvider` 已接入 Runner（`RunnerDependencies.context_provider`，每轮注入上下文、失败 fail-closed）；
 `ToolDescriptor` 副作用授权已接入组合校验（`ToolPolicy::AllowsSideEffects`）；新增静态库安装规则、版本/ABI 校验
 与 Host 接入文档（见 [构建与交付](docs/build-delivery.md)、[UE 接入指南](docs/hosts-unreal.md)、
-[ContextProvider 契约](docs/context-provider.md)、[API 参考](docs/api.md)）。剩余：Memory/摘要、Eval、Validator。
+[ContextProvider 契约](docs/context-provider.md)、[API 参考](docs/api.md)）；新增离线评测 `agent-eval`
+（mock 模式 10/10、离线可复现，见 [eval/README](eval/README.md)）与取消/超时/预算 DoD 回归测试。
+剩余：Memory/摘要、Validator。
 
 仓库里**还没有 UE 插件**；`hosts/unreal/` 只是规划。`source/hosts/reference/` 是纯 C++ 参考 Host Adapter
 （SendAsync/worker、RunHandle/generation、主线程 ToolScheduler、迟到结果抑制），UE 侧可按它对齐实现。
@@ -30,11 +32,11 @@ F1 进展：`ContextProvider` 已接入 Runner（`RunnerDependencies.context_pro
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
 | `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，交互式；启动仅 `--help/--version/--config`，其他用命令） |
 | `source/hosts/reference/` | 纯 C++ 参考 Host Adapter：`SendAsync`/worker、`RunHandle`/generation、主线程 ToolScheduler、迟到结果抑制（UE 接入的对照实现） |
-| `tests/` | 单元测试（doctest） |
+| `tests/` | 单元测试（doctest，163 个 TEST_CASE / 11 个 CTest target，含 DoD 与 eval mock） |
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
 | `third_party/` | 单头依赖（nlohmann/json、doctest） |
 | `.dsh/skills/` | 项目级 DSH skill（`cpp-code-style` 代码规范） |
-| `eval/` | 评测任务与脚本（A3 起） |
+| `eval/` | 评测：`tasks.json`（10 条 mock 任务）+ `eval/README.md`；`agent-eval` 支持 mock/real 模式（mock 离线可复现） |
 
 ## 运行时架构
 
@@ -123,7 +125,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 
 - 真实 API 联调：设置 `DEEPSEEK_API_KEY` 后启动 `agent-cli`，在交互提示符输入“读取 README.md 并总结”；
 - file tracer / usage 持久化已实现；继续验证真实服务下的错误处理与使用体验；
-- F1/A3 收尾：Memory 接口 + 摘要、eval/tasks + runner（验收 eval ≥ 7/10）、Validator、取消/预算 DoD 补测；
+- F1/A3 收尾：Memory 接口 + 摘要、Validator；eval/tasks + runner 已完成（mock 模式 10/10 可复现；
+  real 模式需 `DEEPSEEK_API_KEY`，见 [eval/README](eval/README.md)）；
 - A2 余量只读工具：`list_dir` / `search_text`（写工具等审批机制落地后再开）；
 - 跨平台正式实现：把 `WinHttpTransport` 替换为 libcurl（接口不变，UE 宿主仍用 FHttpModule）；
 - UE 接入：按 [UE 宿主接入指南](docs/hosts-unreal.md) 在宿主工程实现 `FMarianaHttpTransport` + `UMarianaSubsystem`。

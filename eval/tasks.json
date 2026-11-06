@@ -1,0 +1,526 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "single_read_notes",
+      "kind": "single_read",
+      "description": "Single read_file call, then a final answer that contains the notes marker.",
+      "input": "Read the file notes.md and report its release marker.",
+      "max_steps": 4,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-single-read-1",
+              "name": "read_file",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 40,
+            "completion_tokens": 5,
+            "total_tokens": 45
+          }
+        },
+        {
+          "content": "NOTES_MARKER_42: the release checklist covers build, tests and packaging.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 60,
+            "completion_tokens": 10,
+            "total_tokens": 70
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 2,
+        "max_steps": 2,
+        "tools": [
+          "read_file"
+        ],
+        "tool_results_ok": [
+          true
+        ],
+        "content_contains": "NOTES_MARKER_42"
+      }
+    },
+    {
+      "id": "sequential_double_read",
+      "kind": "sequential_read",
+      "description": "Two read_file calls in two successive steps, then a combined answer.",
+      "input": "Read faq.txt and notes.md, then combine both markers.",
+      "max_steps": 5,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-seq-read-1",
+              "name": "read_file",
+              "arguments": {
+                "path": "faq.txt"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 40,
+            "completion_tokens": 5,
+            "total_tokens": 45
+          }
+        },
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-seq-read-2",
+              "name": "read_file",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 5,
+            "total_tokens": 55
+          }
+        },
+        {
+          "content": "FAQ_MARKER_7 comes from faq.txt and NOTES_MARKER_42 comes from notes.md.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 70,
+            "completion_tokens": 10,
+            "total_tokens": 80
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 3,
+        "max_steps": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "tool_results_ok": [
+          true,
+          true
+        ],
+        "content_contains": "FAQ_MARKER_7"
+      }
+    },
+    {
+      "id": "multi_step_guide_chain",
+      "kind": "multi_step",
+      "description": "Three successive read_file steps follow guide.txt, then notes.md, then faq.txt.",
+      "input": "Follow guide.txt to the referenced file, then confirm the notes and faq markers.",
+      "max_steps": 6,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-chain-1",
+              "name": "read_file",
+              "arguments": {
+                "path": "guide.txt"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 40,
+            "completion_tokens": 5,
+            "total_tokens": 45
+          }
+        },
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-chain-2",
+              "name": "read_file",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 5,
+            "total_tokens": 55
+          }
+        },
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-chain-3",
+              "name": "read_file",
+              "arguments": {
+                "path": "faq.txt"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 5,
+            "total_tokens": 55
+          }
+        },
+        {
+          "content": "GUIDE_MARKER_1 -> NOTES_MARKER_42 -> FAQ_MARKER_7.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 70,
+            "completion_tokens": 10,
+            "total_tokens": 80
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 4,
+        "max_steps": 4,
+        "tools": [
+          "read_file",
+          "read_file",
+          "read_file"
+        ],
+        "tool_results_ok": [
+          true,
+          true,
+          true
+        ],
+        "content_contains": "GUIDE_MARKER_1"
+      }
+    },
+    {
+      "id": "recover_missing_file",
+      "kind": "missing_file_recovery",
+      "description": "A failed read of a missing file is fed back to the model, which recovers via notes.md.",
+      "input": "Read missing.txt; if it is unavailable, fall back to notes.md.",
+      "max_steps": 5,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-missing-1",
+              "name": "read_file",
+              "arguments": {
+                "path": "missing.txt"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 45,
+            "completion_tokens": 5,
+            "total_tokens": 50
+          }
+        },
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-missing-2",
+              "name": "read_file",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 5,
+            "total_tokens": 55
+          }
+        },
+        {
+          "content": "RECOVERED_FROM_MISSING: notes.md still contains NOTES_MARKER_42.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 70,
+            "completion_tokens": 10,
+            "total_tokens": 80
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 3,
+        "max_steps": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "tool_results_ok": [
+          false,
+          true
+        ],
+        "content_contains": "RECOVERED_FROM_MISSING"
+      }
+    },
+    {
+      "id": "recover_unknown_tool",
+      "kind": "unknown_tool_recovery",
+      "description": "An unknown tool name is rejected as ToolDenied, then the model recovers with read_file.",
+      "input": "Try the search_docs tool, then fall back to read_file for faq.txt.",
+      "max_steps": 5,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-unknown-1",
+              "name": "search_docs",
+              "arguments": {
+                "query": "faq marker"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 45,
+            "completion_tokens": 5,
+            "total_tokens": 50
+          }
+        },
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-unknown-2",
+              "name": "read_file",
+              "arguments": {
+                "path": "faq.txt"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 5,
+            "total_tokens": 55
+          }
+        },
+        {
+          "content": "RECOVERED_FROM_UNKNOWN_TOOL: FAQ_MARKER_7 loaded with read_file.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 70,
+            "completion_tokens": 10,
+            "total_tokens": 80
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 3,
+        "max_steps": 3,
+        "tools": [
+          "search_docs",
+          "read_file"
+        ],
+        "tool_results_ok": [
+          false,
+          true
+        ],
+        "content_contains": "RECOVERED_FROM_UNKNOWN_TOOL"
+      }
+    },
+    {
+      "id": "fatal_invalid_tool_name",
+      "kind": "invalid_tool_name",
+      "description": "A tool call with an illegal name is fatal: InvalidToolCall, no tool is dispatched.",
+      "input": "Call a tool whose name contains a space and a bang.",
+      "max_steps": 4,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-invalid-1",
+              "name": "read file!",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 30,
+            "completion_tokens": 0,
+            "total_tokens": 30
+          }
+        }
+      ],
+      "expect": {
+        "status": "Failed",
+        "error_code": "InvalidToolCall",
+        "min_steps": 1,
+        "max_steps": 1,
+        "tools": []
+      }
+    },
+    {
+      "id": "fatal_empty_response",
+      "kind": "empty_response",
+      "description": "An empty response without tool calls is fatal: EmptyResponse.",
+      "input": "Answer without any content.",
+      "max_steps": 4,
+      "script": [
+        {
+          "content": "",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 20,
+            "completion_tokens": 0,
+            "total_tokens": 20
+          }
+        }
+      ],
+      "expect": {
+        "status": "Failed",
+        "error_code": "EmptyResponse",
+        "min_steps": 1,
+        "max_steps": 1,
+        "tools": []
+      }
+    },
+    {
+      "id": "fatal_incomplete_length",
+      "kind": "incomplete_response",
+      "description": "finish_reason=length is fatal: IncompleteResponse.",
+      "input": "Answer with a deliberately truncated response.",
+      "max_steps": 4,
+      "script": [
+        {
+          "content": "INCOMPLETE_PARTIAL_ANSWER",
+          "finish_reason": "length",
+          "usage": {
+            "prompt_tokens": 30,
+            "completion_tokens": 5,
+            "total_tokens": 35
+          }
+        }
+      ],
+      "expect": {
+        "status": "Failed",
+        "error_code": "IncompleteResponse",
+        "min_steps": 1,
+        "max_steps": 1,
+        "tools": []
+      }
+    },
+    {
+      "id": "budget_model_call_limit",
+      "kind": "model_call_limit",
+      "description": "Model keeps requesting tools; max_steps=2 stops the loop with ModelCallLimit.",
+      "input": "Keep reading notes.md; the run budget must stop the loop.",
+      "max_steps": 2,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-loop-1",
+              "name": "read_file",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 40,
+            "completion_tokens": 5,
+            "total_tokens": 45
+          }
+        },
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-loop-2",
+              "name": "read_file",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 40,
+            "completion_tokens": 5,
+            "total_tokens": 45
+          }
+        }
+      ],
+      "expect": {
+        "status": "BudgetExceeded",
+        "error_code": "ModelCallLimit",
+        "min_steps": 2,
+        "max_steps": 2,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "tool_results_ok": [
+          true,
+          true
+        ]
+      }
+    },
+    {
+      "id": "budget_tool_call_limit",
+      "kind": "tool_call_limit",
+      "description": "Two tool calls in one response with max_tool_calls=1 stop the run with ToolCallLimit.",
+      "input": "Read two files in one response; the tool budget only allows one call.",
+      "max_steps": 4,
+      "max_tool_calls": 1,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-budget-1",
+              "name": "read_file",
+              "arguments": {
+                "path": "faq.txt"
+              }
+            },
+            {
+              "id": "call-budget-2",
+              "name": "read_file",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 5,
+            "total_tokens": 55
+          }
+        }
+      ],
+      "expect": {
+        "status": "BudgetExceeded",
+        "error_code": "ToolCallLimit",
+        "min_steps": 1,
+        "max_steps": 1,
+        "tools": [
+          "read_file"
+        ],
+        "tool_results_ok": [
+          true
+        ]
+      }
+    }
+  ]
+}

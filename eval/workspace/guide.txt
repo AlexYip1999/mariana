@@ -1,0 +1,3 @@
+GUIDE_MARKER_1: follow this guide to the next file.
+
+NEXT_FILE=notes.md

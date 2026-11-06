@@ -25,6 +25,7 @@ target_link_libraries(agent_metrics_tests PRIVATE agent_metrics agent_third_part
 add_executable(agent_runtime_tests
     runtime_test.cpp
     architecture_test.cpp
+    dod_test.cpp
 )
 target_include_directories(agent_runtime_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(agent_runtime_tests PRIVATE agent_runtime agent_metrics agent_third_party)
