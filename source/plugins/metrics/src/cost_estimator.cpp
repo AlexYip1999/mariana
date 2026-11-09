@@ -81,12 +81,18 @@ bool IsPeak(const ModelPricing& pricing, std::chrono::system_clock::time_point t
     std::tm converted_time{};
     switch (pricing.peak_schedule)
     {
-    case PeakSchedule::None:
-        return false;
-    case PeakSchedule::DeepSeekUtc:
-        return ToUtcTime(time, converted_time) && IsPeakInUtc(converted_time);
-    case PeakSchedule::DeepSeekBeijing:
-        return ToBeijingTime(time, converted_time) && IsPeakInBeijing(converted_time);
+        case PeakSchedule::None:
+        {
+            return false;
+        }
+        case PeakSchedule::DeepSeekUtc:
+        {
+            return ToUtcTime(time, converted_time) && IsPeakInUtc(converted_time);
+        }
+        case PeakSchedule::DeepSeekBeijing:
+        {
+            return ToBeijingTime(time, converted_time) && IsPeakInBeijing(converted_time);
+        }
     }
     return false;
 }

@@ -70,6 +70,7 @@ $ctest = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\Co
 
 - [`.clang-format`](.clang-format)：基于 Microsoft 风格 + **Allman** 大括号。
 - **右大括号 `}` 必须独占一行**（行首，保留缩进）：块级大括号 + 多行初始化列表的嵌套元素（后者 clang-format 不会自动展开，由 `check-format.ps1` 检查）；单行语句（`return {};`、`= {1, 2};`）例外；禁止 `if (...) { ... }`、`} else {`、多行列表里的 `{..., ...},`。
+- **switch 的每个 `case`/`default` 必须用 `{}` 包成块**（即使只有一条 `return`/`break`）：`{` 在标签下一行、`}` 独占一行；连续 fallthrough 标签共用最后一个标签的块；clang-format 不会自动补 `{}`，由 `check-format.ps1` 检查。
 - 4 空格缩进、无 Tab、行宽 120；`third_party/` 和 `build/` 不参与格式化。
 - **命名**：类型与函数/方法 PascalCase；变量/参数 snake_case；成员变量 `m_` + snake_case；常量/宏 UPPER_SNAKE_CASE；命名空间全小写 snake_case；**C++ 源文件/头文件全小写 snake_case**（不用驼峰/中划线）。clang-format 只负责排版，命名靠评审与 `cpp-code-style` skill 约束。
 - 修改 C++ 代码后的固定流程（本机是 Windows PowerShell 5.1 + 执行策略限制，需带 `-ExecutionPolicy Bypass`）：

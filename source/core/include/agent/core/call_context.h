@@ -21,16 +21,26 @@ inline const char* ToString(CallError value)
 {
     switch (value)
     {
-    case CallError::None:
-        return "None";
-    case CallError::Cancelled:
-        return "Cancelled";
-    case CallError::DeadlineExceeded:
-        return "DeadlineExceeded";
-    case CallError::ModelFailure:
-        return "ModelFailure";
-    case CallError::ToolFailure:
-        return "ToolFailure";
+        case CallError::None:
+        {
+            return "None";
+        }
+        case CallError::Cancelled:
+        {
+            return "Cancelled";
+        }
+        case CallError::DeadlineExceeded:
+        {
+            return "DeadlineExceeded";
+        }
+        case CallError::ModelFailure:
+        {
+            return "ModelFailure";
+        }
+        case CallError::ToolFailure:
+        {
+            return "ToolFailure";
+        }
     }
     return "Unknown";
 }

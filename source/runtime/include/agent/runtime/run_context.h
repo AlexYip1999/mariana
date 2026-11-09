@@ -22,16 +22,26 @@ inline const char* ToString(RunStatus value)
 {
     switch (value)
     {
-    case RunStatus::Completed:
-        return "Completed";
-    case RunStatus::Cancelled:
-        return "Cancelled";
-    case RunStatus::Failed:
-        return "Failed";
-    case RunStatus::BudgetExceeded:
-        return "BudgetExceeded";
-    case RunStatus::Busy:
-        return "Busy";
+        case RunStatus::Completed:
+        {
+            return "Completed";
+        }
+        case RunStatus::Cancelled:
+        {
+            return "Cancelled";
+        }
+        case RunStatus::Failed:
+        {
+            return "Failed";
+        }
+        case RunStatus::BudgetExceeded:
+        {
+            return "BudgetExceeded";
+        }
+        case RunStatus::Busy:
+        {
+            return "Busy";
+        }
     }
     return "Unknown";
 }
@@ -62,40 +72,74 @@ inline const char* ToString(RunErrorCode value)
 {
     switch (value)
     {
-    case RunErrorCode::None:
-        return "None";
-    case RunErrorCode::Cancelled:
-        return "Cancelled";
-    case RunErrorCode::DeadlineExceeded:
-        return "DeadlineExceeded";
-    case RunErrorCode::InvalidInput:
-        return "InvalidInput";
-    case RunErrorCode::InvalidConfiguration:
-        return "InvalidConfiguration";
-    case RunErrorCode::Busy:
-        return "Busy";
-    case RunErrorCode::ModelCallLimit:
-        return "ModelCallLimit";
-    case RunErrorCode::ToolCallLimit:
-        return "ToolCallLimit";
-    case RunErrorCode::ToolOutputLimit:
-        return "ToolOutputLimit";
-    case RunErrorCode::ModelFailure:
-        return "ModelFailure";
-    case RunErrorCode::IncompleteResponse:
-        return "IncompleteResponse";
-    case RunErrorCode::EmptyResponse:
-        return "EmptyResponse";
-    case RunErrorCode::ToolDenied:
-        return "ToolDenied";
-    case RunErrorCode::ToolFailure:
-        return "ToolFailure";
-    case RunErrorCode::InvalidToolCall:
-        return "InvalidToolCall";
-    case RunErrorCode::ContextFailure:
-        return "ContextFailure";
-    case RunErrorCode::InternalError:
-        return "InternalError";
+        case RunErrorCode::None:
+        {
+            return "None";
+        }
+        case RunErrorCode::Cancelled:
+        {
+            return "Cancelled";
+        }
+        case RunErrorCode::DeadlineExceeded:
+        {
+            return "DeadlineExceeded";
+        }
+        case RunErrorCode::InvalidInput:
+        {
+            return "InvalidInput";
+        }
+        case RunErrorCode::InvalidConfiguration:
+        {
+            return "InvalidConfiguration";
+        }
+        case RunErrorCode::Busy:
+        {
+            return "Busy";
+        }
+        case RunErrorCode::ModelCallLimit:
+        {
+            return "ModelCallLimit";
+        }
+        case RunErrorCode::ToolCallLimit:
+        {
+            return "ToolCallLimit";
+        }
+        case RunErrorCode::ToolOutputLimit:
+        {
+            return "ToolOutputLimit";
+        }
+        case RunErrorCode::ModelFailure:
+        {
+            return "ModelFailure";
+        }
+        case RunErrorCode::IncompleteResponse:
+        {
+            return "IncompleteResponse";
+        }
+        case RunErrorCode::EmptyResponse:
+        {
+            return "EmptyResponse";
+        }
+        case RunErrorCode::ToolDenied:
+        {
+            return "ToolDenied";
+        }
+        case RunErrorCode::ToolFailure:
+        {
+            return "ToolFailure";
+        }
+        case RunErrorCode::InvalidToolCall:
+        {
+            return "InvalidToolCall";
+        }
+        case RunErrorCode::ContextFailure:
+        {
+            return "ContextFailure";
+        }
+        case RunErrorCode::InternalError:
+        {
+            return "InternalError";
+        }
     }
     return "Unknown";
 }
@@ -105,16 +149,26 @@ inline RunErrorCode ToRunError(core::CallError error)
 {
     switch (error)
     {
-    case core::CallError::None:
-        return RunErrorCode::None;
-    case core::CallError::Cancelled:
-        return RunErrorCode::Cancelled;
-    case core::CallError::DeadlineExceeded:
-        return RunErrorCode::DeadlineExceeded;
-    case core::CallError::ModelFailure:
-        return RunErrorCode::ModelFailure;
-    case core::CallError::ToolFailure:
-        return RunErrorCode::ToolFailure;
+        case core::CallError::None:
+        {
+            return RunErrorCode::None;
+        }
+        case core::CallError::Cancelled:
+        {
+            return RunErrorCode::Cancelled;
+        }
+        case core::CallError::DeadlineExceeded:
+        {
+            return RunErrorCode::DeadlineExceeded;
+        }
+        case core::CallError::ModelFailure:
+        {
+            return RunErrorCode::ModelFailure;
+        }
+        case core::CallError::ToolFailure:
+        {
+            return RunErrorCode::ToolFailure;
+        }
     }
     return RunErrorCode::InternalError;
 }

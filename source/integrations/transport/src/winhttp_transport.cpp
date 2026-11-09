@@ -214,17 +214,25 @@ void CALLBACK OnHttpStatus(HINTERNET, DWORD_PTR context_value, DWORD status, voi
         std::lock_guard lock(state->mutex);
         switch (status)
         {
-        case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
-            state->error = static_cast<WINHTTP_ASYNC_RESULT*>(information)->dwError;
-            break;
-        case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
-            state->bytes_read = length;
-            break;
-        case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
-        case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
-            break;
-        default:
-            return;
+            case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
+            {
+                state->error = static_cast<WINHTTP_ASYNC_RESULT*>(information)->dwError;
+                break;
+            }
+            case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
+            {
+                state->bytes_read = length;
+                break;
+            }
+            case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
+            case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
+            {
+                break;
+            }
+            default:
+            {
+                return;
+            }
         }
         state->completed = true;
     }

@@ -1,6 +1,6 @@
 ---
 name: cpp-code-style
-description: 用于在 agent-core 项目中新增、修改、评审或提交 C++ 代码时。强制项目代码规范：Allman 大括号（右大括号必须独占一行）、PascalCase 命名（类型/函数）、snake_case 命名（变量/文件，成员变量 m_ 前缀）、多字段结构体按语义分组、长布尔条件必须抽成命名函数、namespace 内部使用相对限定名、4 空格缩进、120 列，并在改完代码后运行 scripts/format.ps1、scripts/check-format.ps1、scripts/verify.ps1。任何 .h/.hpp/.cpp 改动后都必须使用。
+description: 用于在 agent-core 项目中新增、修改、评审或提交 C++ 代码时。强制项目代码规范：Allman 大括号（右大括号必须独占一行）、switch 每个 case/default 必须有 {} 块、PascalCase 命名（类型/函数）、snake_case 命名（变量/文件，成员变量 m_ 前缀）、多字段结构体按语义分组、长布尔条件必须抽成命名函数、namespace 内部使用相对限定名、4 空格缩进、120 列，并在改完代码后运行 scripts/format.ps1、scripts/check-format.ps1、scripts/verify.ps1。任何 .h/.hpp/.cpp 改动后都必须使用。
 ---
 
 # C++ 代码规范（agent-core）
@@ -73,6 +73,27 @@ request.messages = {
     {agent::core::ChatRole::User, "hi"},
 };
 ```
+
+6. **switch 的每个 `case`/`default` 必须用 `{}` 包成块**（即使只有一条 `return` / `break`）：
+   - case 标签相对 `switch` 缩进一级（`.clang-format`: `IndentCaseLabels: true`）；
+   - `{` 在标签下一行、与标签同缩进；`}` 独占一行；块内语句再缩进 4 空格；
+   - 连续 fallthrough 标签（`case A:` 紧跟 `case B:`）共用最后一个标签后的块；
+   - `.clang-format` 已配置 `BraceWrapping.AfterCaseLabel: true`；`scripts/check-format.ps1` 会检查缺失的块；
+   - clang-format **不会自动插入** case 的 `{}`，新增 switch 时要手写。
+
+   ```cpp
+   switch (kind)
+   {
+       case MemoryKind::Fact:
+       {
+           return "Fact";
+       }
+       default:
+       {
+           return "Unknown";
+       }
+   }
+   ```
 
 ## 长类型别名
 
@@ -218,6 +239,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
   - `main.cpp` 等全局作用域、以及 `tests/` 里不在 `agent` 命名空间内的代码，仍使用完整 `agent::...`。
 - **不要格式化或修改 `third_party/`、`build/`**。
 - 不要修改 `.clang-format`、`scripts/*.ps1`，除非任务明确就是改规范；规范变更单独提交。
+- `switch` 的 case/default 块规则见铁律 6；clang-format 不会自动补 `{}`，新增 case 要手动写块。
 - core 层禁止 include UE / 平台 / 网络库头文件；依赖通过接口（见 `Agent项目-实施路径.md`）。
 
 ## 完成定义（DoD）
@@ -225,6 +247,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 - [ ] `scripts/check-format.ps1` 通过（退出码 0）
 - [ ] `scripts/verify.ps1` 通过（或格式、构建、测试分别通过）
 - [ ] 块级 `}` 和多行初始化列表的 `}` 都在行首（单行语句 / `return {};` / 空函数 `{}` 除外）
+- [ ] switch 每个 `case`/`default` 都有 `{}` 块（fallthrough 组共用最后一个标签的块）
 - [ ] 命名符合规范：类型/函数 PascalCase，变量/文件 snake_case，成员变量 `m_` 前缀
 - [ ] 长布尔条件已抽成命名函数（`Is...` / `Has...` / `Can...`）
 - [ ] 函数/方法定义之间有空行（包括空实现的 override）

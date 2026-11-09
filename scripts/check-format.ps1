@@ -3,7 +3,7 @@
 .SYNOPSIS
     Check agent-core C++ code format.
 .DESCRIPTION
-    Two checks; any failure exits with code 1:
+    Three checks; any failure exits with code 1:
     1. clang-format --dry-run --Werror against .clang-format
     2. Right brace rule: '}' must start a line (only indentation before it).
        Applies to block braces AND to nested entries of multi-line braced
@@ -13,6 +13,9 @@
        Constructor initializer lists are followed by '{}' on its own line.
        Rejects "if (...) { ... }", "} else {", and
        '{agent::core::ChatRole::User, "hi"},'.
+    3. Case/default rule: every switch case/default body must be a braced block;
+       fallthrough groups (case A: immediately followed by case B:) share the
+       last label's block.
     Skips build/, third_party/, .git/.
 #>
 [CmdletBinding()]
@@ -65,6 +68,7 @@ if ($files.Count -eq 0) {
 
 $formatFailures = New-Object System.Collections.Generic.List[string]
 $braceViolations = New-Object System.Collections.Generic.List[object]
+$caseViolations = New-Object System.Collections.Generic.List[string]
 
 foreach ($f in $files) {
     # Native stderr becomes an ErrorRecord; keep EAP=Continue so a format
@@ -134,7 +138,57 @@ foreach ($f in $files) {
     }
 }
 
-if ($formatFailures.Count -gt 0 -or $braceViolations.Count -gt 0) {
+# Case/default rule: each switch case label must own a braced block.
+# Fallthrough groups (case A: followed immediately by case B:) share the last label's block.
+$labelPattern = '^\s*(case\s+.*|default)\s*:'
+foreach ($f in $files) {
+    $lines = Get-Content -LiteralPath $f.FullName -Encoding UTF8
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $code = $lines[$i]
+        $commentIndex = $code.IndexOf("//")
+        if ($commentIndex -ge 0) {
+            $code = $code.Substring(0, $commentIndex)
+        }
+        if ($code -notmatch $labelPattern) {
+            continue
+        }
+        $afterColon = $code.Substring($code.LastIndexOf(":") + 1).Trim()
+        if ($afterColon -ne "") {
+            $caseViolations.Add(("{0}:{1}  {2}" -f $f.FullName, ($i + 1), $lines[$i].Trim()))
+            continue
+        }
+
+        $j = $i + 1
+        while ($j -lt $lines.Count) {
+            $next = $lines[$j]
+            $nextComment = $next.IndexOf("//")
+            if ($nextComment -ge 0) {
+                $next = $next.Substring(0, $nextComment)
+            }
+            if ($next.Trim() -eq "") {
+                $j++
+                continue
+            }
+            break
+        }
+        if ($j -ge $lines.Count) {
+            continue
+        }
+
+        $nextCode = $lines[$j]
+        $nextComment = $nextCode.IndexOf("//")
+        if ($nextComment -ge 0) {
+            $nextCode = $nextCode.Substring(0, $nextComment)
+        }
+        $nextTrim = $nextCode.Trim()
+        if ($nextTrim -eq "{" -or $nextTrim -match $labelPattern) {
+            continue
+        }
+        $caseViolations.Add(("{0}:{1}  {2}" -f $f.FullName, ($i + 1), $lines[$i].Trim()))
+    }
+}
+
+if ($formatFailures.Count -gt 0 -or $braceViolations.Count -gt 0 -or $caseViolations.Count -gt 0) {
     Write-Host ""
     Write-Host "Format check FAILED:" -ForegroundColor Red
 
@@ -152,6 +206,14 @@ if ($formatFailures.Count -gt 0 -or $braceViolations.Count -gt 0) {
             Write-Host ("    {0}:{1}  {2}" -f $v.File, $v.Line, $v.Text)
         }
         Write-Host "  Rule: '}' must start a line (indentation allowed) — block braces and multi-line braced-list entries; single-line statements ending with ';', empty function bodies '{}', and constructor-body '{}' are exempt." -ForegroundColor Yellow
+    }
+
+    if ($caseViolations.Count -gt 0) {
+        Write-Host ("  Case/default body is not a braced block ({0}):" -f $caseViolations.Count) -ForegroundColor Red
+        foreach ($v in $caseViolations) {
+            Write-Host ("    " + $v)
+        }
+        Write-Host "  Rule: every case/default body must be a braced block on its own line; fallthrough groups share the last label's block." -ForegroundColor Yellow
     }
 
     exit 1

@@ -12,6 +12,7 @@ BreakBeforeBraces: Custom
 BraceWrapping:
   AfterClass: true
   AfterControlStatement: Always
+  AfterCaseLabel: true
   AfterEnum: true
   AfterFunction: true
   AfterNamespace: true
@@ -31,6 +32,8 @@ PackConstructorInitializers: Never
 BreakConstructorInitializers: BeforeComma
 # 函数/方法定义之间必须空一行（包括空实现的 override）
 SeparateDefinitionBlocks: Always
+# switch：case/default 标签相对 switch 缩进一级；块位置由 AfterCaseLabel 控制
+IndentCaseLabels: true
 AllowShortLoopsOnASingleLine: false
 AllowShortCaseLabelsOnASingleLine: false
 AllowShortLambdasOnASingleLine: None

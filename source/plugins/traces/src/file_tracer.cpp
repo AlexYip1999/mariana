@@ -42,14 +42,22 @@ std::string RoleName(core::ChatRole role)
 {
     switch (role)
     {
-    case core::ChatRole::System:
-        return "system";
-    case core::ChatRole::User:
-        return "user";
-    case core::ChatRole::Assistant:
-        return "assistant";
-    case core::ChatRole::Tool:
-        return "tool";
+        case core::ChatRole::System:
+        {
+            return "system";
+        }
+        case core::ChatRole::User:
+        {
+            return "user";
+        }
+        case core::ChatRole::Assistant:
+        {
+            return "assistant";
+        }
+        case core::ChatRole::Tool:
+        {
+            return "tool";
+        }
     }
     return "unknown";
 }
