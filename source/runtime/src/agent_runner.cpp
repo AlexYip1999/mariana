@@ -17,8 +17,8 @@ namespace agent::runtime
 namespace
 {
 
-constexpr const char* kContextOpenTag = "<context>\n";
-constexpr const char* kContextCloseTag = "\n</context>";
+constexpr const char* kMemoryTag = "memory";
+constexpr const char* kContextTag = "context";
 
 RunOutcome Decided(RunOutcome result, RunStatus status, RunErrorCode code, std::string error,
                    std::string content = std::string())
@@ -84,21 +84,26 @@ std::size_t EstimateMessagesChars(const std::vector<core::ChatMessage>& messages
     return total;
 }
 
-std::size_t ContextWrapperChars()
+std::size_t TaggedWrapperChars(const std::string& tag)
 {
-    return std::string(kContextOpenTag).size() + std::string(kContextCloseTag).size();
+    return 2 * tag.size() + 7;
 }
 
-/// 把 Provider JSON 包成一条 System 消息，插在最近一条 User（当前轮输入）之前。
-void InjectContextMessage(std::vector<core::ChatMessage>& messages, const std::string& context_json)
+std::string WrapTagged(const std::string& tag, const std::string& payload)
 {
-    if (context_json.empty())
+    return "<" + tag + ">\n" + payload + "\n</" + tag + ">";
+}
+
+/// 把带标签的上下文包成一条 System 消息，插在最近一条 User（当前轮输入）之前。
+void InjectTaggedContext(std::vector<core::ChatMessage>& messages, const std::string& tag, const std::string& payload)
+{
+    if (payload.empty())
     {
         return;
     }
     core::ChatMessage message;
     message.role = core::ChatRole::System;
-    message.content = std::string(kContextOpenTag) + context_json + std::string(kContextCloseTag);
+    message.content = WrapTagged(tag, payload);
     for (std::size_t index = messages.size(); index > 0; --index)
     {
         if (messages[index - 1].role == core::ChatRole::User)
@@ -112,8 +117,8 @@ void InjectContextMessage(std::vector<core::ChatMessage>& messages, const std::s
 
 /// 每轮调用一次 ContextProvider；失败返回 false（fail-closed），由调用方转成 RunOutcome。
 bool BuildProviderContext(const RunnerDependencies& dependencies, const AgentProfile& profile,
-                          const core::Conversation& conversation, const std::string& user_input,
-                          const RunContext& context, std::string& context_json, std::string& error)
+                          const std::string& user_input, std::size_t used_chars, const RunContext& context,
+                          std::string& context_json, std::string& error)
 {
     if (!dependencies.context_provider || !dependencies.context_policy)
     {
@@ -123,15 +128,15 @@ bool BuildProviderContext(const RunnerDependencies& dependencies, const AgentPro
     std::size_t payload_budget = 0;
     if (profile.max_context_chars > 0)
     {
-        const auto prepared = dependencies.context_policy->Prepare(conversation.messages, profile.max_context_chars);
-        const std::size_t used = EstimateMessagesChars(prepared);
-        const std::size_t remaining = used < profile.max_context_chars ? profile.max_context_chars - used : 0;
-        if (remaining <= ContextWrapperChars())
+        const std::size_t remaining =
+            used_chars < profile.max_context_chars ? profile.max_context_chars - used_chars : 0;
+        const std::size_t wrapper = TaggedWrapperChars(kContextTag);
+        if (remaining <= wrapper)
         {
             // 没有剩余上下文预算：跳过 Provider，不注入。
             return true;
         }
-        payload_budget = remaining - ContextWrapperChars();
+        payload_budget = remaining - wrapper;
     }
 
     core::AgentContextRequest request;
@@ -169,11 +174,76 @@ bool BuildProviderContext(const RunnerDependencies& dependencies, const AgentPro
     return true;
 }
 
+/// 每轮调用一次 MemoryStore；召回失败降级为空（记忆是增强项，不阻塞决策）。
+void BuildMemoryContext(const RunnerDependencies& dependencies, const AgentProfile& profile, const RunContext& context,
+                        const std::string& user_input, std::size_t used_chars, std::string& memory_text)
+{
+    const MemoryPolicy& policy = profile.memory_policy;
+    if (!policy.enable_recall || !dependencies.memory)
+    {
+        return;
+    }
+
+    std::size_t payload_budget = policy.recall_budget_chars;
+    if (profile.max_context_chars > 0)
+    {
+        const std::size_t remaining =
+            used_chars < profile.max_context_chars ? profile.max_context_chars - used_chars : 0;
+        const std::size_t wrapper = TaggedWrapperChars(kMemoryTag);
+        if (remaining <= wrapper)
+        {
+            return;
+        }
+        payload_budget = remaining - wrapper;
+        if (policy.recall_budget_chars > 0 && policy.recall_budget_chars < payload_budget)
+        {
+            payload_budget = policy.recall_budget_chars;
+        }
+    }
+
+    core::MemoryQuery query;
+    query.text = user_input;
+    query.scopes = policy.recall_scopes;
+    query.limit = policy.recall_limit;
+    query.max_chars = payload_budget;
+    query.call = context.call;
+
+    std::vector<core::MemoryHit> hits;
+    try
+    {
+        hits = dependencies.memory->Recall(query);
+    }
+    catch (...)
+    {
+        // 记忆召回异常降级为空，不影响本轮。
+        return;
+    }
+
+    std::string rendered;
+    for (const core::MemoryHit& hit : hits)
+    {
+        if (hit.record.text.empty())
+        {
+            continue;
+        }
+        rendered += "[" + std::string(core::ToString(hit.record.kind)) + "] " + hit.record.text + "\n";
+    }
+    if (rendered.empty())
+    {
+        return;
+    }
+    if (payload_budget > 0 && rendered.size() > payload_budget)
+    {
+        rendered.resize(core::Utf8PrefixSize(rendered, payload_budget));
+    }
+    memory_text = std::move(rendered);
+}
+
 } // namespace
 
 static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentProfile& profile,
                            TurnWorkspace& workspace, const RunContext& context, const SystemNotifier& notifier,
-                           const std::string& provider_context, RunOutcome& result)
+                           const std::string& memory_context, const std::string& provider_context, RunOutcome& result)
 {
     core::Conversation& conversation = workspace.Conversation();
     const auto specs = dependencies.tools->SpecsFor(profile.tool_names);
@@ -192,7 +262,8 @@ static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentPr
         request.max_tokens = profile.max_tokens;
         request.tools = specs;
         request.messages = dependencies.context_policy->Prepare(conversation.messages, profile.max_context_chars);
-        InjectContextMessage(request.messages, provider_context);
+        InjectTaggedContext(request.messages, kMemoryTag, memory_context);
+        InjectTaggedContext(request.messages, kContextTag, provider_context);
         notifier.ModelRequested(request);
         if (context.Interruption() != RunErrorCode::None)
         {
@@ -348,14 +419,24 @@ RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& work
             const CompositionValidation validation = ValidateComposition(m_dependencies, profile);
             if (!validation.Ok())
             {
-                outcome = {RunStatus::Failed, RunErrorCode::InvalidConfiguration, validation.Describe()};
+                outcome = { RunStatus::Failed, RunErrorCode::InvalidConfiguration, validation.Describe() };
             }
             else
             {
+                const auto prepared = m_dependencies.context_policy->Prepare(workspace.Conversation().messages,
+                                                                             profile.max_context_chars);
+                std::size_t used_chars = EstimateMessagesChars(prepared);
+                std::string memory_context;
+                BuildMemoryContext(m_dependencies, profile, context, user_input, used_chars, memory_context);
+                if (!memory_context.empty())
+                {
+                    used_chars += TaggedWrapperChars(kMemoryTag) + memory_context.size();
+                }
+
                 std::string provider_context;
                 std::string provider_error;
-                const bool context_ok = BuildProviderContext(m_dependencies, profile, workspace.Conversation(),
-                                                             user_input, context, provider_context, provider_error);
+                const bool context_ok = BuildProviderContext(m_dependencies, profile, user_input, used_chars, context,
+                                                             provider_context, provider_error);
                 if (!context_ok)
                 {
                     outcome = {RunStatus::Failed, RunErrorCode::ContextFailure,
@@ -363,8 +444,8 @@ RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& work
                 }
                 else
                 {
-                    outcome =
-                        RunSteps(m_dependencies, profile, workspace, context, notifier, provider_context, outcome);
+                    outcome = RunSteps(m_dependencies, profile, workspace, context, notifier, memory_context,
+                                       provider_context, outcome);
                 }
             }
         }

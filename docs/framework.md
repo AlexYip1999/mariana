@@ -575,8 +575,10 @@ PR5  ToolDescriptor + ValidateComposition
 - 观察/追踪契约稳定。
 
 > 当前进展（F1 进行中）：单 Provider 已接入 `RunnerDependencies.context_provider`（每轮注入、失败
-> fail-closed、预算裁剪）；`ToolPolicy::AllowsSideEffects` 副作用授权已接入组合校验；剩余 Memory/摘要、
-> eval、Validator。ContextPipeline（多 Provider 顺序注入）与强类型上下文留待后续。
+> fail-closed、预算裁剪）；`ToolPolicy::AllowsSideEffects` 副作用授权已接入组合校验；Memory Phase 1 已交付
+> （`MemoryStore`/`Summarizer` 契约 + InMemory/Noop + 规则摘要 + `<memory>` 召回注入，见
+> [`memory.md`](memory.md)）；剩余会话压缩、模型摘要、Validator。ContextPipeline（多 Provider 顺序注入）
+> 与强类型上下文留待后续。
 
 ### F2：B1 UE Editor
 

@@ -33,6 +33,7 @@ add_subdirectory(source/integrations/model)
 add_subdirectory(source/plugins/metrics)
 add_subdirectory(source/plugins/tools)
 add_subdirectory(source/plugins/traces)
+add_subdirectory(source/plugins/memory)
 add_subdirectory(source/runtime)
 add_subdirectory(source/hosts/cli)
 add_subdirectory(source/hosts/reference)
@@ -55,6 +56,7 @@ set(AGENT_CORE_INSTALL_LIBRARIES
     agent_metrics
     agent_tools
     agent_traces
+    agent_memory
 )
 if(WIN32)
     # 非 Windows 下 agent_transport 是 INTERFACE 库，没有安装产物。
@@ -73,6 +75,7 @@ install(DIRECTORY
     source/plugins/metrics/include/
     source/plugins/tools/include/
     source/plugins/traces/include/
+    source/plugins/memory/include/
     source/runtime/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
@@ -80,7 +83,7 @@ install(DIRECTORY
 install(FILES README.md LICENSE NOTICE
     DESTINATION ${CMAKE_INSTALL_DATADIR}/agent-core
 )
-install(FILES docs/build-delivery.md docs/hosts-unreal.md docs/context-provider.md docs/api.md
+install(FILES docs/build-delivery.md docs/hosts-unreal.md docs/context-provider.md docs/api.md docs/memory.md
     DESTINATION ${CMAKE_INSTALL_DATADIR}/agent-core/docs
 )
 

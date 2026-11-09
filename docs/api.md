@@ -12,6 +12,8 @@ include/agent/core/
   chat_model.h     ChatRequest / ChatResponse / ChatUsage / ChatModel
   call_context.h   CallContext / CallError（stop_token + deadline）
   context.h        AgentContextRequest / AgentContextResult / ContextProvider
+  memory.h         MemoryKind / MemoryScope / MemoryRecord / MemoryQuery / MemoryHit / MemoryStore
+  summarizer.h     SummaryRequest / SummaryResult / Summarizer（中期压缩）
   conversation.h   Conversation（短期历史）
   agent_system.h   AgentSystem / TurnEvent（观察者契约）
   system_registry.h SystemRegistry（观察者注册）
@@ -22,7 +24,8 @@ include/agent/core/
 
 include/agent/runtime/
   agent.h              AgentDescriptor / AgentId / AgentScope / AgentDependencies / Agent
-  agent_profile.h      AgentProfile / RunOptions
+  agent_profile.h      AgentProfile / RunOptions / MemoryPolicy
+  memory_policy.h      MemoryPolicy（召回开关/上限/作用域）
   agent_session.h      AgentSession（Send / ClearHistory / Records）
   agent_run.h          RunOutcome / ToolExecutionRecord / TurnRecord / AgentRunResult
   agent_runner.h       RunnerDependencies / AgentRunner
@@ -44,6 +47,7 @@ include/agent/runtime/
 include/agent/transport/http_transport.h   HttpRequest / HttpResponse / HttpTransport
 include/agent/model/openai_chat_model.h    OpenAiConfig / OpenAiChatModel
 include/agent/plugins/traces/*             FileTracer / TraceSink / TraceUsage / TraceViewer
+include/agent/plugins/memory/*             NoopMemoryStore / InMemoryMemoryStore / RuleBasedSummarizer
 include/agent/plugins/metrics/*            MetricsCollector / CostEstimator / MetricsSnapshot
 include/agent/plugins/tools/*              ReadFileTool / WorkspacePathPolicy
 include/agent/hosts/reference/reference_host.h  参考 Host Adapter（非生产）

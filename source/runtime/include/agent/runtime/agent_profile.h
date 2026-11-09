@@ -8,6 +8,7 @@
 
 #include "agent/core/message.h"
 #include "agent/core/tool.h"
+#include "agent/runtime/memory_policy.h"
 
 namespace agent::runtime
 {
@@ -31,6 +32,9 @@ struct AgentProfile
     std::size_t max_tool_calls = 64;
     std::size_t max_tool_output_bytes = 32 * 1024;
     int turn_timeout_ms = 120000;
+
+    // 长期记忆（默认关闭；见 docs/memory.md）
+    MemoryPolicy memory_policy;
 };
 
 struct RunOptions
