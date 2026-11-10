@@ -68,6 +68,8 @@ ToolDispatchResult ToolDispatcher::Execute(const core::ToolCall& call, const std
     {
         return Failure(RunErrorCode::InvalidToolCall, "invalid tool call id or name");
     }
+
+    // 同一 call id 重放：参数一致时复用缓存结果。
     for (const auto& previous : run_outcome.tool_executions)
     {
         if (previous.call.id == call.id)
@@ -89,6 +91,7 @@ ToolDispatchResult ToolDispatcher::Execute(const core::ToolCall& call, const std
             return {cached, previous.dispatch_error_code};
         }
     }
+
     if (m_output_budget.used_bytes >= m_output_budget.max_bytes)
     {
         return Failure(RunErrorCode::ToolOutputLimit, "tool output budget exhausted");

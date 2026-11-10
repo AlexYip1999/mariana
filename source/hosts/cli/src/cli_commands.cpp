@@ -153,6 +153,7 @@ class ConfigCommand final : public CliCommand
             PrintConfig(out, context.config, agent.Profile());
             return CommandResult::Handled;
         }
+
         if (args == "init")
         {
             const ConfigInitResult result = WriteDefaultCliConfigFile("config.local.json");
@@ -166,6 +167,7 @@ class ConfigCommand final : public CliCommand
             }
             return CommandResult::Handled;
         }
+
         out << "usage: /config show|init\n";
         return CommandResult::Handled;
     }
@@ -232,6 +234,7 @@ class ToolsCommand final : public CliCommand
             out << "usage: /tools on|off\n";
             return CommandResult::Handled;
         }
+
         auto profile = agent.Profile();
         if (context.tool_catalog == nullptr)
         {
@@ -312,12 +315,14 @@ class StatsCommand final : public CliCommand
             out << "stats auto: " << (context.auto_stats ? "on" : "off") << "\n";
             return CommandResult::Handled;
         }
+
         if (args == "today" || args == "all")
         {
             out << plugins::traces::FormatUsageSummary(plugins::traces::ScanTraceUsage(context.trace_dir, args), args)
                 << "\n";
             return CommandResult::Handled;
         }
+
         if (args.empty())
         {
             if (context.stats)

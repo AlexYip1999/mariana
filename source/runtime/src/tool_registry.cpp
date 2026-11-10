@@ -57,6 +57,7 @@ bool ToolRegistry::Register(std::shared_ptr<core::Tool> tool, ToolDescriptor des
         error = "duplicate tool name: " + name;
         return false;
     }
+
     if (descriptor.description.empty())
     {
         descriptor.description = tool->Description();

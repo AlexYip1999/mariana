@@ -118,6 +118,7 @@ struct TurnFixture
         agent::runtime::AgentRunner runner(agent::tests::MakeRunnerDependencies(*model, services));
         const agent::runtime::RunContext context = agent::runtime::RunContext::Create(profile, "dod-session", options);
         agent::core::SystemRegistry systems;
+
         TurnExecution execution = agent::runtime::ExecuteTurn(profile, staged, runner, input, context, systems);
         if (execution.history)
         {
@@ -132,12 +133,17 @@ struct TurnFixture
         return execution;
     }
 
+    // 替身与注册表
     std::shared_ptr<FunctionModel> model = std::make_shared<FunctionModel>();
     std::shared_ptr<FunctionTool> tool = std::make_shared<FunctionTool>();
     std::shared_ptr<agent::runtime::ToolRegistry> tools = std::make_shared<agent::runtime::ToolRegistry>();
     agent::runtime::ServiceRegistry services;
+
+    // 本次运行的 profile 与选项
     agent::runtime::AgentProfile profile;
     agent::runtime::RunOptions options;
+
+    // 提交 / 回滚前后可见的对话历史
     agent::core::Conversation staged;
     agent::core::Conversation conversation;
 };
@@ -162,7 +168,9 @@ TEST_CASE("cancelled model response rolls back staged history")
     CHECK(execution.result.error_code == RunErrorCode::Cancelled);
     CHECK(execution.result.steps == 1);
     CHECK(execution.result.content.empty());
+
     CHECK(fixture.model->requests == 1);
+
     CHECK_FALSE(execution.history.has_value());
     CHECK(fixture.conversation.messages.empty());
 }
@@ -190,11 +198,13 @@ TEST_CASE("cancel during tool execution keeps ledger and rolls back history")
     CHECK(execution.result.status == RunStatus::Cancelled);
     CHECK(execution.result.error_code == RunErrorCode::Cancelled);
     CHECK(execution.result.steps == 1);
+
     CHECK(execution.result.tool_attempts == 1);
     REQUIRE(execution.result.tool_executions.size() == 1);
     CHECK(execution.result.tool_executions.front().execution_started);
     CHECK(execution.result.tool_executions.front().result.content == "side effect completed");
     CHECK(fixture.tool->calls == 1);
+
     CHECK_FALSE(execution.history.has_value());
     CHECK(fixture.conversation.messages.empty());
 }
@@ -218,8 +228,10 @@ TEST_CASE("deadline exceeded during model call returns budget error without hang
     CHECK(execution.result.steps <= 1);
     CHECK(fixture.model->requests <= 1);
     CHECK(execution.result.error.find("deadline") != std::string::npos);
+
     CHECK_FALSE(execution.history.has_value());
     CHECK(fixture.conversation.messages.empty());
+
     CHECK(elapsed < 2s);
 }
 
@@ -239,8 +251,10 @@ TEST_CASE("model call budget stops at max steps and commits user input")
     CHECK(execution.result.steps == 2);
     CHECK(execution.result.tool_attempts == 2);
     CHECK(execution.result.tool_executions.size() == 2);
+
     CHECK(fixture.model->requests == 2);
     CHECK(fixture.tool->calls == 2);
+
     REQUIRE(execution.history.has_value());
     REQUIRE(execution.history->messages.size() == 5);
     CHECK(execution.history->messages.front().role == agent::core::ChatRole::User);
@@ -268,11 +282,13 @@ TEST_CASE("tool call budget rejects extra calls and removes incomplete batch")
     CHECK(execution.result.status == RunStatus::BudgetExceeded);
     CHECK(execution.result.error_code == RunErrorCode::ToolCallLimit);
     CHECK(execution.result.steps == 1);
+
     CHECK(execution.result.tool_attempts == 1);
     REQUIRE(execution.result.tool_executions.size() == 1);
     CHECK(execution.result.tool_executions.front().call.id == "first");
     CHECK(execution.result.tool_executions.front().execution_started);
     CHECK(fixture.tool->calls == 1);
+
     REQUIRE(execution.history.has_value());
     REQUIRE(execution.history->messages.size() == 1);
     CHECK(execution.history->messages.front().role == agent::core::ChatRole::User);
@@ -299,10 +315,12 @@ TEST_CASE("tool output budget truncates large tool result")
     CHECK(execution.result.error_code == RunErrorCode::None);
     CHECK(execution.result.content == "done");
     CHECK(execution.result.steps == 2);
+
     REQUIRE(execution.result.tool_executions.size() == 1);
     const std::string& truncated = execution.result.tool_executions.front().result.content;
     CHECK(truncated.size() < 100);
     CHECK(truncated.find("[truncated]") != std::string::npos);
+
     REQUIRE(execution.history.has_value());
     REQUIRE(execution.history->messages.size() == 4);
     CHECK(execution.history->messages[2].role == agent::core::ChatRole::Tool);
@@ -323,8 +341,10 @@ TEST_CASE("pre-cancelled run never calls the model and leaves no history")
     CHECK(execution.result.steps == 0);
     CHECK(execution.result.tool_attempts == 0);
     CHECK(execution.result.tool_executions.empty());
+
     CHECK(fixture.model->requests == 0);
     CHECK(fixture.tool->calls == 0);
+
     CHECK_FALSE(execution.history.has_value());
     CHECK(fixture.conversation.messages.empty());
 }
@@ -359,11 +379,13 @@ TEST_CASE("tool policy cancellation records a not-started execution")
     CHECK(execution.result.status == RunStatus::Cancelled);
     CHECK(execution.result.error_code == RunErrorCode::Cancelled);
     CHECK(execution.result.steps == 1);
+
     CHECK(execution.result.tool_attempts == 1);
     REQUIRE(execution.result.tool_executions.size() == 1);
     CHECK_FALSE(execution.result.tool_executions.front().execution_started);
     CHECK(execution.result.tool_executions.front().dispatch_error_code == RunErrorCode::Cancelled);
     CHECK(fixture.tool->calls == 0);
+
     CHECK_FALSE(execution.history.has_value());
     CHECK(fixture.conversation.messages.empty());
 }

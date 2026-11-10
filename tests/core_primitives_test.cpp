@@ -83,10 +83,13 @@ class FakeTracer : public agent::core::Tracer
         m_last_tool_ok = result.ok;
     }
 
+    // 回调计数
     int m_model_requests = 0;
     int m_model_responses = 0;
     int m_tool_calls = 0;
     int m_tool_results = 0;
+
+    // 最近一次事件的摘要
     std::string m_last_model;
     std::string m_last_tool;
     bool m_last_ok = false;
@@ -116,6 +119,7 @@ TEST_CASE("chat message carries tool calls and tool call id")
     tool_message.role = agent::core::ChatRole::Tool;
     tool_message.tool_call_id = "call_1";
     tool_message.content = "file content";
+
     CHECK(tool_message.role == agent::core::ChatRole::Tool);
     CHECK(tool_message.tool_call_id == "call_1");
 }
@@ -231,6 +235,7 @@ TEST_CASE("system registry keeps ordered systems")
     registry.Add(first);
     registry.Add(second);
     registry.Add(nullptr);
+
     CHECK(registry.Size() == 2);
     REQUIRE(registry.Systems().size() == 2);
     CHECK(registry.Systems()[0].get() == first.get());

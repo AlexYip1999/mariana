@@ -15,6 +15,7 @@ namespace agent::hosts::reference
 
 struct ReferenceHost::AgentState
 {
+    // 运行时对象与会话 id
     std::unique_ptr<runtime::Agent> agent;
     std::string session_id;
 
@@ -91,8 +92,11 @@ core::ToolResult MainThreadToolScheduler::Execute(std::shared_ptr<core::Tool> to
 {
     struct Pending
     {
+        // 同步原语：主线程完成时置位并唤醒等待方
         std::mutex mutex;
         std::condition_variable condition;
+
+        // 执行结果
         bool done = false;
         core::ToolResult result;
     };
@@ -210,6 +214,7 @@ bool ReferenceHost::AddAgent(std::string agent_id, runtime::AgentProfile profile
         tool_policy != nullptr ? std::move(tool_policy)
                                : std::make_shared<runtime::AllowListToolPolicy>(profile.tool_names);
 
+    // 组装 Agent 运行依赖
     runtime::RunnerDependencies dependencies;
     dependencies.model = m_model;
     dependencies.tools = m_tools;
@@ -232,6 +237,7 @@ bool ReferenceHost::AddAgent(std::string agent_id, runtime::AgentProfile profile
     state->agent =
         std::make_unique<runtime::Agent>(std::move(descriptor), std::move(profile), std::move(agent_dependencies));
     state->session_id = state->agent->SessionId();
+
     {
         std::lock_guard lock(m_agents_mutex);
         m_agents.emplace(std::move(agent_id), std::move(state));
@@ -265,6 +271,8 @@ RunHandle ReferenceHost::SendAsync(const std::string& agent_id, std::string inpu
     handle.session_id = state->session_id;
     handle.run_id = runtime::ExecutionId::NewRun();
     std::stop_token stop_token;
+
+    // 忙则返回 Busy；否则占用 Agent 并递增 generation（迟到回调据此丢弃）
     {
         std::lock_guard lock(state->mutex);
         if (state->busy)
@@ -289,6 +297,7 @@ RunHandle ReferenceHost::SendAsync(const std::string& agent_id, std::string inpu
     options.stop_token = stop_token;
     options.run_id = handle.run_id;
 
+    // 回收已结束的 worker，再登记并启动本次 turn 的 worker
     ReapWorkers();
     auto worker = std::make_shared<Worker>();
     worker->finished = std::make_shared<std::atomic<bool>>(false);
@@ -296,6 +305,7 @@ RunHandle ReferenceHost::SendAsync(const std::string& agent_id, std::string inpu
         std::lock_guard lock(m_workers_mutex);
         m_workers.push_back(worker);
     }
+
     worker->thread = std::thread(
         [this, state, generation = handle.generation, input = std::move(input), options = std::move(options),
          on_done = std::move(on_done), finished = worker->finished]() mutable

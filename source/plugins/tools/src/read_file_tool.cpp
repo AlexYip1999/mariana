@@ -49,6 +49,8 @@ bool IsValidUtf8(const std::string& text)
             ++index;
             continue;
         }
+
+        // 按首字节范围区分 2/3/4 字节序列，并校验续字节与 overlong 边界。
         if (first >= 0xC2U && first <= 0xDFU)
         {
             if (index + 1 >= text.size() || !IsContinuationByte(static_cast<unsigned char>(text[index + 1])))
@@ -58,6 +60,7 @@ bool IsValidUtf8(const std::string& text)
             index += 2;
             continue;
         }
+
         if (first >= 0xE0U && first <= 0xEFU)
         {
             if (index + 2 >= text.size() || !IsContinuationByte(static_cast<unsigned char>(text[index + 1])) ||
@@ -73,6 +76,7 @@ bool IsValidUtf8(const std::string& text)
             index += 3;
             continue;
         }
+
         if (first >= 0xF0U && first <= 0xF4U)
         {
             if (index + 3 >= text.size() || !IsContinuationByte(static_cast<unsigned char>(text[index + 1])) ||
@@ -89,6 +93,7 @@ bool IsValidUtf8(const std::string& text)
             index += 4;
             continue;
         }
+
         return false;
     }
     return true;
@@ -319,6 +324,7 @@ core::ToolResult ReadFileTool::Execute(const std::string& arguments_json, const 
         result.error_code = context.Interruption();
         return result;
     }
+
     nlohmann::json arguments;
     try
     {
@@ -353,6 +359,7 @@ core::ToolResult ReadFileTool::ExecuteRead(const std::string& relative_path) con
     {
         return MakeError("invalid UTF-8 path");
     }
+
     if (relative.is_absolute() || relative.has_root_name())
     {
         return MakeError("absolute paths are not allowed");

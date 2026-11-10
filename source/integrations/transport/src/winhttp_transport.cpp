@@ -115,10 +115,12 @@ bool ReadContentLength(HINTERNET request, std::size_t limit, std::optional<std::
     {
         return true;
     }
+
     if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
     {
         return true;
     }
+
     size = sizeof(text);
     if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, text, &size,
                              WINHTTP_NO_HEADER_INDEX))
@@ -130,12 +132,14 @@ bool ReadContentLength(HINTERNET request, std::size_t limit, std::optional<std::
         response.error = "invalid HTTP Content-Length";
         return false;
     }
+
     const std::wstring_view value(text, size / sizeof(wchar_t));
     if (value.empty() || value.find_first_not_of(L"0123456789") != std::wstring_view::npos)
     {
         response.error = "invalid HTTP Content-Length";
         return false;
     }
+
     std::size_t length = 0;
     for (const wchar_t character : value)
     {
@@ -147,18 +151,24 @@ bool ReadContentLength(HINTERNET request, std::size_t limit, std::optional<std::
         }
         length = length * 10 + digit;
     }
+
     expected = length;
     return true;
 }
 
 struct AsyncState
 {
+    // Synchronization and completion state
     std::mutex mutex;
     std::condition_variable_any changed;
     bool completed = false;
     DWORD error = ERROR_SUCCESS;
+
+    // Read buffer filled by READ_COMPLETE callbacks
     DWORD bytes_read = 0;
     std::array<char, 8192> buffer{};
+
+    // Request data kept alive while the async request is in flight
     std::string request_body;
     std::wstring headers;
 
@@ -178,6 +188,7 @@ struct AsyncState
                            {
                                return completed;
                            });
+
         if (stop_token.stop_requested())
         {
             response.error = "HTTP request cancelled";
@@ -202,6 +213,7 @@ void CALLBACK OnHttpStatus(HINTERNET, DWORD_PTR context_value, DWORD status, voi
     {
         return;
     }
+
     auto* context = reinterpret_cast<AsyncContext*>(context_value);
     const auto state = *context;
     if (status == WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING)
@@ -210,6 +222,7 @@ void CALLBACK OnHttpStatus(HINTERNET, DWORD_PTR context_value, DWORD status, voi
         delete context;
         return;
     }
+
     {
         std::lock_guard lock(state->mutex);
         switch (status)
@@ -236,6 +249,7 @@ void CALLBACK OnHttpStatus(HINTERNET, DWORD_PTR context_value, DWORD status, voi
         }
         state->completed = true;
     }
+
     state->changed.notify_all();
 }
 
@@ -259,6 +273,7 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         response.error = "HTTP request body too large";
         return response;
     }
+
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(request.timeout_ms);
 
     const std::wstring url = Utf8ToWide(request.url);
@@ -324,6 +339,7 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         return response;
     }
 
+    // Async state travels through CONTEXT_VALUE and is released by the final HANDLE_CLOSING callback.
     const auto state = std::make_shared<AsyncState>();
     auto context = std::make_unique<AsyncContext>(state);
     DWORD_PTR context_value = reinterpret_cast<DWORD_PTR>(context.get());
@@ -359,6 +375,7 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         response.error = "WinHttpSendRequest failed: " + LastWindowsError();
         return response;
     }
+
     if (!state->Wait(deadline, request.stop_token, response))
     {
         return response;
@@ -370,6 +387,7 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         response.error = "WinHttpReceiveResponse failed: " + LastWindowsError();
         return response;
     }
+
     if (!state->Wait(deadline, request.stop_token, response))
     {
         return response;
@@ -383,6 +401,7 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         response.error = "WinHttpQueryHeaders failed: " + LastWindowsError();
         return response;
     }
+
     response.status = static_cast<int>(status_code);
     std::optional<std::size_t> expected_length;
     const bool has_body = response.status != 204 && response.status != 304;
@@ -391,6 +410,7 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         return response;
     }
 
+    // Read the response body in chunks, enforcing the size limit while reading.
     std::string body;
     for (;;)
     {
@@ -401,10 +421,12 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
             response.error = "WinHttpReadData failed: " + LastWindowsError();
             return response;
         }
+
         if (!state->Wait(deadline, request.stop_token, response))
         {
             return response;
         }
+
         const DWORD read = state->bytes_read;
         if (read == 0)
         {
@@ -424,6 +446,7 @@ HttpResponse WinHttpTransport::PostJson(const HttpRequest& request)
         response.error = "HTTP response body incomplete";
         return response;
     }
+
     response.body = std::move(body);
     return response;
 }

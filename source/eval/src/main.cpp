@@ -134,10 +134,16 @@ struct TaskResult
     std::string status;
     std::string error_code;
     std::string run_error;
+
+    // 执行计数
     int steps = 0;
     std::size_t tool_attempts = 0;
+
+    // 工具轨迹
     std::vector<std::string> tools;
     std::vector<bool> tool_results_ok;
+
+    // 模型调用与 token 用量
     int model_calls = 0;
     std::int64_t tokens = 0;
 
@@ -568,9 +574,11 @@ std::vector<core::ToolCall> ParseToolCalls(const std::string& where, const nlohm
     {
         throw TaskFormatError(where + "tool_calls must be an array");
     }
+
     std::vector<core::ToolCall> calls;
     calls.reserve(value.size());
     std::size_t index = 0;
+
     for (const nlohmann::json& item : value)
     {
         const std::string call_where = where + "[" + std::to_string(index) + "]: ";
@@ -610,6 +618,7 @@ core::ChatResponse ParseScriptResponse(const std::string& where, const nlohmann:
     {
         throw TaskFormatError(where + "response must be an object");
     }
+
     core::ChatResponse response;
     response.ok = ReadOptionalBool(where, value, "ok", true);
     response.content = ReadOptionalString(where, value, "content", "");
@@ -621,6 +630,8 @@ core::ChatResponse ParseScriptResponse(const std::string& where, const nlohmann:
     {
         throw TaskFormatError(where + "unknown error_code: " + error_code_name);
     }
+
+    // 可选字段：用量与工具调用
     if (value.contains("usage"))
     {
         response.usage = ParseUsage(where + "usage: ", value.at("usage"));
@@ -655,6 +666,7 @@ TaskExpectation ParseExpectation(const std::string& where, const nlohmann::json&
     {
         throw TaskFormatError(where + "expect must be an object");
     }
+
     TaskExpectation expectation;
     const std::string status_name = RequireString(where, value, "status");
     if (!ParseRunStatusName(status_name, expectation.status))
@@ -666,6 +678,8 @@ TaskExpectation ParseExpectation(const std::string& where, const nlohmann::json&
     {
         throw TaskFormatError(where + "unknown error_code: " + error_code_name);
     }
+
+    // 可选约束：步数范围、工具轨迹与最终回答
     expectation.min_steps = ReadOptionalInt(where, value, "min_steps");
     expectation.max_steps = ReadOptionalInt(where, value, "max_steps");
     if (HasInvertedStepRange(expectation.min_steps, expectation.max_steps))
@@ -694,12 +708,15 @@ void ParseTask(const nlohmann::json& value, std::size_t index, EvalTask& task)
     {
         throw TaskFormatError(position + " must be an object");
     }
+
     task.id = RequireString(position + ": ", value, "id");
     const std::string where = "task \"" + task.id + "\": ";
     task.kind = RequireString(where, value, "kind");
     task.description = ReadOptionalString(where, value, "description", "");
     task.input = RequireString(where, value, "input");
     task.system_prompt = ReadOptionalString(where, value, "system_prompt", kDefaultSystemPrompt);
+
+    // 执行预算：max_steps 必须为正
     task.max_steps = ReadOptionalInt(where, value, "max_steps").value_or(kDefaultMaxSteps);
     if (task.max_steps <= 0)
     {
@@ -707,6 +724,8 @@ void ParseTask(const nlohmann::json& value, std::size_t index, EvalTask& task)
     }
     task.max_tool_calls = ReadOptionalSize(where, value, "max_tool_calls", kDefaultMaxToolCalls);
     task.max_tool_output_bytes = ReadOptionalSize(where, value, "max_tool_output_bytes", kDefaultMaxToolOutputBytes);
+
+    // mock 脚本（可选）与期望（必填）
     if (value.contains("script"))
     {
         task.script = ParseScript(where + "script", value.at("script"));
@@ -774,6 +793,8 @@ bool LoadTasks(const std::filesystem::path& path, std::vector<EvalTask>& tasks, 
     {
         return false;
     }
+
+    // 解析 JSON 并定位任务数组
     nlohmann::json document;
     try
     {
@@ -790,6 +811,7 @@ bool LoadTasks(const std::filesystem::path& path, std::vector<EvalTask>& tasks, 
         error = "tasks file must be a JSON array or an object with a \"tasks\" array: " + PathText(path);
         return false;
     }
+
     tasks.clear();
     std::size_t index = 0;
     for (const nlohmann::json& item : *task_list)
@@ -807,6 +829,8 @@ bool LoadTasks(const std::filesystem::path& path, std::vector<EvalTask>& tasks, 
         tasks.push_back(std::move(task));
         ++index;
     }
+
+    // 后置校验：任务非空且 id 唯一
     if (tasks.empty())
     {
         error = "no tasks found in " + PathText(path);
@@ -928,6 +952,8 @@ bool ParseCliOptions(const std::vector<std::string>& arguments, CliOptions& opti
             return false;
         }
     }
+
+    // 循环结束后校验必填项；--help 优先返回
     if (options.help)
     {
         return true;
@@ -1033,6 +1059,8 @@ std::string EvaluateTaskExpectation(const TaskExpectation& expectation, const Ta
                                     const runtime::AgentRunResult& run)
 {
     std::vector<std::string> failures;
+
+    // 运行状态与执行计数
     const std::string expected_status = runtime::ToString(expectation.status);
     if (result.status != expected_status)
     {
@@ -1053,6 +1081,8 @@ std::string EvaluateTaskExpectation(const TaskExpectation& expectation, const Ta
         failures.push_back("steps expected <= " + std::to_string(*expectation.max_steps) + ", got " +
                            std::to_string(result.steps));
     }
+
+    // 工具轨迹与最终回答
     if (expectation.tool_names && result.tools != *expectation.tool_names)
     {
         failures.push_back("tools expected " + FormatToolNames(*expectation.tool_names) + ", got " +
@@ -1144,6 +1174,7 @@ nlohmann::json BuildReportJson(const CliOptions& options, const std::filesystem:
     report["pass_rate"] = pass_rate;
     report["threshold"] = options.min_pass_rate;
 
+    // 逐条任务的明细结果
     nlohmann::json task_results = nlohmann::json::array();
     for (const TaskResult& result : results)
     {

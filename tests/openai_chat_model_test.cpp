@@ -57,16 +57,22 @@ TEST_CASE("model owns transport and clamps requests to remaining turn deadline")
     agent::model::OpenAiChatModel model(transport, MakeConfig());
     transport.reset();
     REQUIRE_FALSE(retained.expired());
+
     auto request = MakeChatRequest();
     request.call.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+
     model.Chat(request);
+
     REQUIRE(retained.lock()->RequestCount() == 1);
     CHECK(retained.lock()->LastRequest().timeout_ms > 0);
     CHECK(retained.lock()->LastRequest().timeout_ms <= 1000);
+
     request.call.deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
     const auto expired = model.Chat(request);
+
     CHECK(expired.error_code == agent::core::CallError::DeadlineExceeded);
     CHECK(retained.lock()->RequestCount() == 1);
+
     CHECK_THROWS_AS(agent::model::OpenAiChatModel(nullptr, MakeConfig()), std::invalid_argument);
 }
 
@@ -77,11 +83,15 @@ TEST_CASE("model forwards cancellation and skips pre-cancelled requests")
     auto request = MakeChatRequest();
     std::stop_source stop;
     request.call.stop_token = stop.get_token();
+
     model.Chat(request);
+
     CHECK(transport->RequestCount() == 1);
     CHECK(transport->LastRequest().stop_token == stop.get_token());
+
     stop.request_stop();
     const auto response = model.Chat(request);
+
     CHECK_FALSE(response.ok);
     CHECK(response.error.find("cancelled") != std::string::npos);
     CHECK(transport->RequestCount() == 1);

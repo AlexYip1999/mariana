@@ -84,6 +84,8 @@ bool RenderTraceFile(const std::filesystem::path& path, std::ostream& out, std::
                     << " content=\"" << Preview(event.value("content", std::string()), 80) << "\"\n";
                 continue;
             }
+
+            // 未知事件（或旧版本 trace）按通用格式输出。
             out << "  [" << timestamp << "] " << name << "\n";
         }
         catch (const nlohmann::json::exception& exception)
@@ -92,6 +94,7 @@ bool RenderTraceFile(const std::filesystem::path& path, std::ostream& out, std::
             return false;
         }
     }
+
     return true;
 }
 

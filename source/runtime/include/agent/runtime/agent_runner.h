@@ -34,9 +34,11 @@ struct RunnerDependencies
     std::shared_ptr<const ContextPolicy> context_policy;
     std::shared_ptr<const ToolOutputPolicy> tool_output_policy;
 
-    // 宿主线程、观察与上下文
+    // 宿主线程与观察
     std::shared_ptr<ToolScheduler> tool_scheduler;
     std::shared_ptr<core::SystemRegistry> systems;
+
+    // 可选注入：宿主上下文 / 长期记忆召回 / 会话压缩
     /// 可选：每轮模型调用前构建宿主上下文（世界快照/检索）；为空表示不注入。
     std::shared_ptr<core::ContextProvider> context_provider;
     /// 可选：长期记忆召回（由 AgentProfile::memory_policy 控制是否启用）；为空表示不召回。

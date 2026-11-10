@@ -46,6 +46,7 @@ std::vector<std::string> ReadUtf8Args(int argc, char** argv)
     }
 #endif
 
+    // 非 Windows 平台：argv 直接按 UTF-8 处理
     std::vector<std::string> args;
     args.reserve(static_cast<std::size_t>(argc));
     for (int i = 0; i < argc; ++i)

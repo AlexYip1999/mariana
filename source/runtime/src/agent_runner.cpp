@@ -101,9 +101,11 @@ void InjectTaggedContext(std::vector<core::ChatMessage>& messages, const std::st
     {
         return;
     }
+
     core::ChatMessage message;
     message.role = core::ChatRole::System;
     message.content = WrapTagged(tag, payload);
+
     for (std::size_t index = messages.size(); index > 0; --index)
     {
         if (messages[index - 1].role == core::ChatRole::User)
@@ -161,11 +163,13 @@ bool BuildProviderContext(const RunnerDependencies& dependencies, const AgentPro
         error = "context provider threw an unknown exception";
         return false;
     }
+
     if (!result.ok)
     {
         error = result.error.empty() ? "context provider failed" : result.error;
         return false;
     }
+
     if (profile.max_context_chars > 0 && result.context_json.size() > payload_budget)
     {
         result.context_json.resize(core::Utf8PrefixSize(result.context_json, payload_budget));
@@ -249,12 +253,15 @@ static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentPr
     const auto specs = dependencies.tools->SpecsFor(profile.tool_names);
     ToolDispatcher dispatcher(*dependencies.tools, *dependencies.tool_policy, *dependencies.tool_output_policy,
                               *dependencies.tool_scheduler, notifier, context);
+
     for (int step = 0; step < context.budget.max_model_calls; ++step)
     {
         if (context.Interruption() != RunErrorCode::None)
         {
             return Interrupted(std::move(result), context.Interruption());
         }
+
+        // 组装本轮请求：裁剪历史、附加工具定义与两类注入上下文。
         core::ChatRequest request;
         request.call = context.call;
         request.model = profile.model;
@@ -264,12 +271,14 @@ static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentPr
         request.messages = dependencies.context_policy->Prepare(conversation.messages, profile.max_context_chars);
         InjectTaggedContext(request.messages, kMemoryTag, memory_context);
         InjectTaggedContext(request.messages, kContextTag, provider_context);
+
         notifier.ModelRequested(request);
         if (context.Interruption() != RunErrorCode::None)
         {
             return Interrupted(std::move(result), context.Interruption());
         }
         ++result.steps;
+
         core::ChatResponse response;
         try
         {
@@ -285,11 +294,13 @@ static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentPr
             response.error = "model call failed";
             response.error_code = core::CallError::ModelFailure;
         }
+
         notifier.ModelResponded(response);
         if (context.Interruption() != RunErrorCode::None)
         {
             return Interrupted(std::move(result), context.Interruption());
         }
+
         if (!response.ok)
         {
             const auto call_code =
@@ -321,11 +332,14 @@ static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentPr
             return Decided(std::move(result), RunStatus::Failed, RunErrorCode::InvalidToolCall,
                            "invalid tool call id or name");
         }
+
+        // 执行工具调用并把结果逐条回填对话；致命错误直接结束本轮。
         core::ChatMessage assistant;
         assistant.role = core::ChatRole::Assistant;
         assistant.content = response.content;
         assistant.tool_calls = response.tool_calls;
         conversation.Append(std::move(assistant));
+
         for (const auto& call : response.tool_calls)
         {
             const ToolDispatchResult dispatched = dispatcher.Execute(call, profile.tool_names, result);
@@ -372,6 +386,7 @@ AgentRunner::AgentRunner(RunnerDependencies dependencies)
     {
         throw std::invalid_argument("runner requires explicit model, tools, policies, scheduler and systems");
     }
+
     // Snapshot registration so later host edits cannot change an active executor's capabilities.
     m_dependencies.tools = std::make_shared<ToolRegistry>(*m_dependencies.tools);
 }
@@ -401,6 +416,7 @@ RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& work
 {
     RunOutcome outcome;
     SystemNotifier notifier(*m_dependencies.systems);
+
     try
     {
         if (user_input.empty())
@@ -428,6 +444,7 @@ RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& work
             }
             else
             {
+                // 准备本轮上下文：裁剪历史、召回记忆、构建 Provider 上下文。
                 const auto prepared = m_dependencies.context_policy->Prepare(workspace.Conversation().messages,
                                                                              profile.max_context_chars);
                 std::size_t used_chars = EstimateMessagesChars(prepared);

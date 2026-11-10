@@ -51,12 +51,15 @@ class ToolDispatcher
                                RunOutcome& run_outcome);
 
   private:
+    // 构造期注入的只读依赖
     const ToolRegistry& m_tools;
     const ToolPolicy& m_policy;
     const ToolOutputPolicy& m_output_policy;
     ToolScheduler& m_scheduler;
     const SystemNotifier& m_notifier;
     const RunContext& m_context;
+
+    // 本轮可变的工具输出预算
     ToolOutputBudget m_output_budget;
 };
 

@@ -50,6 +50,7 @@ class TestSocket
 
     TestSocket(const TestSocket&) = delete;
     TestSocket& operator=(const TestSocket&) = delete;
+
     SOCKET value;
 };
 
@@ -66,6 +67,7 @@ class LoopbackHttpServer
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
         if (m_listener.value == INVALID_SOCKET)
         {
             throw std::runtime_error("cannot create loopback test socket");
@@ -83,6 +85,7 @@ class LoopbackHttpServer
         {
             throw std::runtime_error("cannot listen on loopback test server");
         }
+
         m_port = ntohs(address.sin_port);
         m_thread = std::jthread(
             [this](std::stop_token token)
@@ -135,6 +138,7 @@ class LoopbackHttpServer
                 break;
             }
             request.append(buffer, count);
+
             const auto header_end = request.find("\r\n\r\n");
             if (header_end == std::string::npos)
             {
@@ -159,6 +163,7 @@ class LoopbackHttpServer
             FD_ZERO(&readers);
             FD_SET(m_listener.value, &readers);
             timeval timeout{0, 20000};
+
             if (select(0, &readers, nullptr, nullptr, &timeout) <= 0)
             {
                 continue;
@@ -168,26 +173,34 @@ class LoopbackHttpServer
             {
                 continue;
             }
+
             const DWORD timeout_ms = 2000;
             setsockopt(client.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout_ms),
                        sizeof(timeout_ms));
             setsockopt(client.value, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout_ms),
                        sizeof(timeout_ms));
+
             const std::string request = ReadRequest(client.value);
             {
                 std::lock_guard lock(m_mutex);
                 m_requests.push_back(request);
             }
+
             m_handler(client.value, token);
         }
     }
 
+    // Winsock session and listener resources
     WinsockSession m_winsock;
     TestSocket m_listener;
     Handler m_handler;
     unsigned short m_port = 0;
+
+    // Requests received by the worker thread
     mutable std::mutex m_mutex;
     std::vector<std::string> m_requests;
+
+    // Background accept loop
     std::jthread m_thread;
 };
 

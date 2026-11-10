@@ -21,8 +21,10 @@ inline runtime::RunnerDependencies MakeRunnerDependencies(core::ChatModel& model
 {
     runtime::RunnerDependencies dependencies;
     dependencies.model = BorrowForTest(model);
+
     const auto tools = services.Get<runtime::ToolRegistry>();
     dependencies.tools = tools ? tools : std::make_shared<runtime::ToolRegistry>();
+
     const auto tool_policy = services.Get<runtime::ToolPolicy>();
     dependencies.tool_policy = tool_policy ? tool_policy : std::make_shared<runtime::AllowAllToolPolicy>();
     const auto context_policy = services.Get<runtime::ContextPolicy>();
@@ -30,6 +32,7 @@ inline runtime::RunnerDependencies MakeRunnerDependencies(core::ChatModel& model
     const auto output_policy = services.Get<runtime::ToolOutputPolicy>();
     dependencies.tool_output_policy =
         output_policy ? output_policy : std::make_shared<runtime::TruncateToolOutputPolicy>();
+
     dependencies.tool_scheduler = std::make_shared<runtime::InlineToolScheduler>();
     const auto systems = services.Get<core::SystemRegistry>();
     dependencies.systems = systems ? systems : std::make_shared<core::SystemRegistry>();
@@ -44,6 +47,7 @@ inline runtime::AgentRunResult RunTurnForTest(runtime::AgentRunner& runner, cons
     core::SystemRegistry empty_systems;
     runtime::TurnExecution execution =
         runtime::ExecuteTurn(profile, conversation, runner, input, context, systems ? *systems : empty_systems);
+
     if (execution.history)
     {
         conversation = std::move(*execution.history);

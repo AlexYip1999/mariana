@@ -179,9 +179,11 @@ TEST_CASE("cli validates and loads total turn budgets")
     CHECK(parsed.config.turn_timeout_ms == 750);
     CHECK(parsed.config.max_tool_calls == 2);
     CHECK(parsed.config.max_tool_output_bytes == 99);
+
     CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"turn_timeout_ms":0})").ok);
     CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"max_tool_calls":-1})").ok);
     CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"max_tool_output_bytes":1.5})").ok);
+
     CHECK(agent::hosts::cli::ParseCliConfig(R"({"max_tool_calls":0,"max_tool_output_bytes":0})").ok);
 }
 
@@ -195,6 +197,7 @@ TEST_CASE("parses cli config overrides")
     CHECK(result.config.model == "deepseek-reasoner");
     CHECK(result.config.timeout_ms == 5000);
     CHECK(result.config.temperature == doctest::Approx(0.3));
+
     CHECK(result.config.api_key_env == "DEEPSEEK_API_KEY");
     CHECK(result.config.provider == "deepseek");
     CHECK(result.config.cost_currency == "CNY");
@@ -239,11 +242,13 @@ TEST_CASE("HTTP endpoint exceptions require an exact loopback host")
                                              "http://localhost\\@attacker.example/chat",
                                              "https:///chat",
                                              "http://localhost\n/chat"};
+
     for (const auto& endpoint : allowed)
     {
         CAPTURE(endpoint);
         CHECK(agent::hosts::cli::ParseCliConfig(nlohmann::json{{"endpoint", endpoint}}.dump()).ok);
     }
+
     for (const auto& endpoint : denied)
     {
         CAPTURE(endpoint);
@@ -263,6 +268,7 @@ TEST_CASE("rejects negative fractional and overflowing integer settings")
             CHECK_FALSE(agent::hosts::cli::ParseCliConfig(nlohmann::json{{field, value}}.dump()).ok);
         }
     }
+
     CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"timeout_ms":0})").ok);
     CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"timeout_ms":4294967297})").ok);
     CHECK_FALSE(agent::hosts::cli::ParseCliConfig(R"({"max_context_chars":-1})").ok);
@@ -463,6 +469,7 @@ TEST_CASE("runs a single question and prints content")
         });
 
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
+
     std::istringstream input("hello\n/exit\n");
     std::ostringstream out;
     std::ostringstream err;
@@ -470,6 +477,7 @@ TEST_CASE("runs a single question and prints content")
     AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
+
     const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, out, err);
 
     CHECK(exit_code == 0);
@@ -529,6 +537,7 @@ TEST_CASE("runs a tool call end to end through cli")
         });
 
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
+
     std::istringstream input("read README\n/exit\n");
     std::ostringstream out;
     std::ostringstream err;
@@ -541,6 +550,7 @@ TEST_CASE("runs a tool call end to end through cli")
     AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
+
     const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, out, err);
 
     CHECK(exit_code == 0);
@@ -573,6 +583,7 @@ TEST_CASE("reports model errors")
         });
 
     agent::model::OpenAiChatModel adapter(transport, MakeOpenAiConfig());
+
     std::istringstream input("hello\n/exit\n");
     std::ostringstream out;
     std::ostringstream err;
@@ -580,6 +591,7 @@ TEST_CASE("reports model errors")
     AddInteractiveCommands(services, MakeCliConfig());
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(MakeCliConfig(), executor.Get(), services);
+
     const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, out, err);
 
     CHECK(exit_code == 0);
@@ -641,6 +653,7 @@ TEST_CASE("interactive trims whitespace before commands")
     AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(config, executor.Get(), services);
+
     CHECK(agent::hosts::cli::RunCliLoop(agent, services, input, output, error) == 0);
     CHECK(output.str().find("[stats]") != std::string::npos);
     CHECK(adapter.requests.empty());
@@ -663,9 +676,11 @@ TEST_CASE("interactive reports metrics when enabled")
     systems->Add(metrics);
     services.Set<agent::core::SystemRegistry>(systems);
     services.Set<agent::core::StatsView>(metrics);
+
     AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(config, executor.Get(), services);
+
     const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, output, error, true);
 
     CHECK(exit_code == 0);
@@ -691,9 +706,11 @@ TEST_CASE("interactive stats command reports current session")
     systems->Add(metrics);
     services.Set<agent::core::SystemRegistry>(systems);
     services.Set<agent::core::StatsView>(metrics);
+
     AddInteractiveCommands(services, config);
     TestExecutor executor(adapter, services);
     auto agent = MakeAgent(config, executor.Get(), services);
+
     const int exit_code = agent::hosts::cli::RunCliLoop(agent, services, input, output, error, false);
 
     CHECK(exit_code == 0);

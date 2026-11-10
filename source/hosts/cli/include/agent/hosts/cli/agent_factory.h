@@ -33,7 +33,10 @@ class AgentFactory
     runtime::AgentProfile MakeProfile() const;
     runtime::RunnerDependencies MakeRunnerDependencies(const std::shared_ptr<runtime::ToolRegistry>& tools) const;
 
+    // 配置
     CliConfig m_config;
+
+    // 注入的共享依赖
     std::shared_ptr<core::ChatModel> m_model;
     std::shared_ptr<core::SystemRegistry> m_systems;
     std::shared_ptr<ToolCatalog> m_tool_catalog;

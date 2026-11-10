@@ -67,6 +67,7 @@ TEST_CASE("estimates deepseek cny cost and cache")
     // 北京时间 08:00（UTC 00:00），off-peak。
     const agent::plugins::metrics::CostEstimate off_peak =
         estimator.Estimate("deepseek", "deepseek-flash", usage, UtcTime(2026, 11, 2, 0));
+
     // 北京时间 10:00（UTC 02:00），peak。
     const agent::plugins::metrics::CostEstimate peak =
         estimator.Estimate("deepseek", "deepseek-flash", usage, UtcTime(2026, 11, 2, 2));
@@ -247,14 +248,17 @@ TEST_CASE("keeps context usage after response without usage")
     agent::core::ChatResponse first;
     first.ok = true;
     first.usage = MakeUsage(2000, 400, 1800, 200);
+
     metrics.OnTurnStart();
     metrics.OnModelRequest(request);
     metrics.OnModelResponse(first);
+
     CHECK(metrics.Snapshot().context_usage_percent == doctest::Approx(0.2));
 
     agent::core::ChatResponse failed;
     failed.ok = false;
     failed.error = "timeout";
+
     metrics.OnTurnStart();
     metrics.OnModelRequest(request);
     metrics.OnModelResponse(failed);

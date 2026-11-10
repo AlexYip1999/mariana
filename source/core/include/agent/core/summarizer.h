@@ -17,17 +17,22 @@ inline constexpr const char* kSummaryMessagePrefix = "[conversation-summary]\n";
 /// 中期压缩请求：把一段旧轮次压成可继续使用的摘要。
 struct SummaryRequest
 {
+    // 输入：待压缩的旧轮次与所属记忆作用域
     std::vector<ChatMessage> turns;
     MemoryScope scope;
-    // >0 = 摘要输出字符上限；0 = 由实现决定
+
+    // 预算与调用：>0 = 摘要输出字符上限，0 = 由实现决定
     std::size_t max_chars = 0;
     CallContext call;
 };
 
 struct SummaryResult
 {
+    // 结果
     bool ok = true;
     std::string summary;
+
+    // 失败原因（ok=false 时由实现填写）
     std::string error;
 };
 

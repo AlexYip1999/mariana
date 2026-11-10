@@ -16,10 +16,11 @@ class ModelSummarizer final : public core::Summarizer
   public:
     struct Config
     {
-        // 摘要模型名；空 = 由 ChatModel 适配器决定
+        // 采样：摘要模型名（空 = 由 ChatModel 适配器决定）与输出上限
         std::string model;
         int max_tokens = 256;
-        // 只允许基于给定轮次重述，不新增事实
+
+        // 提示词：只允许基于给定轮次重述，不新增事实
         std::string system_prompt = "You compress old conversation turns into a short factual summary. "
                                     "Keep facts, commitments, open tasks and relationships. "
                                     "Only restate what the turns contain; never invent new information. "

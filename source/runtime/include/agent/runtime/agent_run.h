@@ -15,8 +15,11 @@ namespace agent::runtime
 
 struct ToolExecutionRecord
 {
+    // 调用与结果
     core::ToolCall call;
     core::ToolResult result;
+
+    // 调度状态
     RunErrorCode dispatch_error_code = RunErrorCode::None;
     // Submitted to the scheduler; a cancelled/failed dispatch may already have caused side effects.
     bool execution_started = false;

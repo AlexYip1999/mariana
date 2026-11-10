@@ -141,10 +141,13 @@ struct Fixture
         return std::make_shared<agent::runtime::AgentRunner>(dependencies);
     }
 
+    // 可注入替身与注册表
     std::shared_ptr<FunctionModel> model = std::make_shared<FunctionModel>();
     std::shared_ptr<FunctionTool> tool = std::make_shared<FunctionTool>();
     std::shared_ptr<agent::runtime::ToolRegistry> tools = std::make_shared<agent::runtime::ToolRegistry>();
     std::shared_ptr<agent::core::SystemRegistry> systems = std::make_shared<agent::core::SystemRegistry>();
+
+    // 组装 runner 所需的依赖与默认 profile
     agent::runtime::RunnerDependencies dependencies;
     agent::runtime::AgentProfile profile;
 };
@@ -182,8 +185,11 @@ class Gate
     }
 
   private:
+    // 同步原语
     std::mutex m_mutex;
     std::condition_variable m_condition;
+
+    // 闸门状态
     int m_arrivals = 0;
     bool m_released = false;
 };
@@ -201,9 +207,12 @@ TEST_CASE("runner dependencies own their model after assembly scope ends")
         profile = fixture.profile;
         runner = fixture.Runner();
     }
+
     CHECK_FALSE(model.expired());
+
     agent::runtime::AgentSession session(profile, runner);
     CHECK(session.Send("hello").Ok());
+
     const agent::runtime::RunnerDependencies missing;
     CHECK_THROWS_AS(static_cast<void>(std::make_shared<agent::runtime::AgentRunner>(missing)), std::invalid_argument);
 }
@@ -216,14 +225,17 @@ TEST_CASE("agent profile defaults stay immutable and executor replacement releas
     std::weak_ptr<agent::runtime::AgentExecutor> previous = initial;
     agent::runtime::AgentDescriptor descriptor;
     agent::runtime::Agent agent(descriptor, first.profile, {nullptr, initial});
+
     initial.reset();
     auto current = agent.Profile();
     current.system_prompt = "updated";
     auto replacement = second.Runner();
     REQUIRE(agent.Reconfigure(current, replacement));
+
     CHECK(previous.expired());
     CHECK(agent.Dependencies().executor == replacement);
     CHECK(agent.Profile().system_prompt == "updated");
+
     current.system_prompt = "uncommitted";
     CHECK(agent.Profile().system_prompt == "updated");
     CHECK(agent.Send("hello").Ok());
@@ -235,8 +247,10 @@ TEST_CASE("child service scope owns its parent and runner snapshots tool registr
     parent->Set<int>(std::make_shared<int>(42));
     agent::runtime::ServiceRegistry child(parent);
     parent.reset();
+
     REQUIRE(child.Get<int>());
     CHECK(*child.Get<int>() == 42);
+
     Fixture fixture;
     auto runner = fixture.Runner();
     fixture.tools->Clear();
@@ -245,6 +259,7 @@ TEST_CASE("child service scope owns its parent and runner snapshots tool registr
     {
         return ++steps == 1 ? Call() : Answer();
     };
+
     agent::runtime::AgentSession session(fixture.profile, runner, {}, fixture.systems);
     CHECK(session.Send("execute").Ok());
     CHECK(fixture.tool->calls == 1);
@@ -300,8 +315,10 @@ TEST_CASE("scheduler receives context only after authorization and cancellation 
         {
             return ++steps == 1 ? Call() : Answer();
         };
+
         agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
         const auto result = session.Send("execute", stop.get_token());
+
         REQUIRE(result.tool_executions.size() == 1);
         CHECK(scheduler->calls == (mode == 0 ? 1 : 0));
         CHECK(result.tool_executions.front().execution_started == (mode == 0));
@@ -337,15 +354,20 @@ TEST_CASE("finalization rolls back internal failure after execution while keepin
     {
         return Call();
     };
+
     auto log = std::make_shared<TurnObserver>();
     fixture.systems->Add(log);
     agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
+
     const auto result = session.Send("execute");
+
     CHECK(result.error_code == RunErrorCode::InternalError);
     CHECK(session.History().messages.size() == 1);
+
     REQUIRE(result.tool_executions.size() == 1);
     CHECK(result.tool_executions.front().execution_started);
     CHECK(result.tool_executions.front().result.content == "echo");
+
     CHECK(log->finishes == 1);
     CHECK_FALSE(log->last_ok);
     CHECK(log->last_steps == result.steps);
@@ -358,11 +380,14 @@ TEST_CASE("turn end is published after the session commits history")
     {
         return Answer();
     };
+
     auto observer = std::make_shared<EndOrderObserver>();
     agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
     observer->session = &session;
     fixture.systems->Add(observer);
+
     const auto result = session.Send("execute");
+
     REQUIRE(result.Ok());
     CHECK(result.run_id == observer->run_id);
     CHECK(observer->history_size_at_end == 3);
@@ -376,11 +401,15 @@ TEST_CASE("session preflight rejects unknown tools without starting a turn")
     {
         return Answer();
     };
+
     auto log = std::make_shared<TurnObserver>();
     fixture.systems->Add(log);
     agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
+
     const auto result = session.Send("execute");
+
     CHECK(result.error_code == RunErrorCode::InvalidConfiguration);
+
     CHECK(log->finishes == 0);
     CHECK(session.Records().empty());
     CHECK(session.History().messages.size() == 1);
@@ -396,14 +425,17 @@ TEST_CASE("same session rejects concurrent mutations while independent sessions 
         gate.Enter();
         return Answer();
     };
+
     agent::runtime::AgentSession one(first.profile, first.Runner(), {}, first.systems);
     agent::runtime::AgentSession two(second.profile, second.Runner(), {}, second.systems);
+
     auto first_run = std::async(std::launch::async,
                                 [&]
                                 {
                                     return one.Send("one");
                                 });
     CHECK(gate.WaitFor(1));
+
     const auto busy = one.Send("rejected");
     CHECK(busy.status == RunStatus::Busy);
     CHECK(busy.error_code == RunErrorCode::Busy);
@@ -411,6 +443,7 @@ TEST_CASE("same session rejects concurrent mutations while independent sessions 
     CHECK_FALSE(one.SetProfile(first.profile));
     CHECK_FALSE(one.Reconfigure(first.profile, first.Runner()));
     CHECK(one.History().messages.size() == 1);
+
     auto second_run = std::async(std::launch::async,
                                  [&]
                                  {
@@ -418,6 +451,7 @@ TEST_CASE("same session rejects concurrent mutations while independent sessions 
                                  });
     CHECK(gate.WaitFor(2));
     gate.Release();
+
     CHECK(first_run.get().Ok());
     CHECK(second_run.get().Ok());
     CHECK(one.Records().size() == 1);
@@ -436,6 +470,7 @@ TEST_CASE("same thread reentry is busy and does not deadlock snapshots")
         CHECK(session.History().messages.size() == 1);
         return Answer();
     };
+
     CHECK(session.Send("outer").Ok());
 }
 
@@ -458,11 +493,14 @@ TEST_CASE("session preserves correlation and committed history when a custom exe
 
     auto executor = std::make_shared<ThrowingExecutor>();
     agent::runtime::AgentSession session({}, executor);
+
     const auto result = session.Send("hello");
+
     CHECK(result.error_code == RunErrorCode::InternalError);
     CHECK(result.run_id == executor->run_id);
     CHECK(result.session_id == session.Id());
     CHECK(session.History().messages.empty());
+
     REQUIRE(session.Records().size() == 1);
     CHECK(session.Records().front().run_id == executor->run_id);
 }
@@ -486,16 +524,20 @@ TEST_CASE("cancelled tool side effects remain recorded independently of rolled b
         result.content = "side effect completed";
         return result;
     };
+
     agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
     const auto result = session.Send("execute", stop.get_token());
+
     CHECK(result.status == RunStatus::Cancelled);
     CHECK(result.error_code == RunErrorCode::Cancelled);
     CHECK(result.session_id == session.Id());
     CHECK_FALSE(result.run_id.empty());
     CHECK(session.History().messages.size() == 1);
+
     REQUIRE(result.tool_executions.size() == 1);
     CHECK(result.tool_executions.front().execution_started);
     CHECK(result.tool_executions.front().result.content == "side effect completed");
+
     REQUIRE(session.ClearHistory());
     REQUIRE(session.Records().size() == 1);
     CHECK(session.Records().front().tool_executions.size() == 1);
@@ -513,10 +555,13 @@ TEST_CASE("tool ids replay once per turn and conflicting reuse is rejected")
             ++requests;
             return requests == 1 ? Call() : requests == 2 ? Call("call", conflict ? "[]" : "{}") : Answer();
         };
+
         agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
         const auto result = session.Send("execute");
+
         CHECK(result.Ok() == !conflict);
         CHECK(result.error_code == (conflict ? RunErrorCode::InvalidToolCall : RunErrorCode::None));
+
         CHECK(fixture.tool->calls == 1);
         CHECK(result.tool_attempts == 2);
         CHECK(result.tool_executions.size() == 1);
@@ -536,15 +581,19 @@ TEST_CASE("tool budgets account for cached output and remove unfinished batches"
             response.tool_calls.push_back({"second", "echo", "{}"});
             return response;
         };
+
         agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
         const auto result = session.Send("execute");
+
         CHECK(result.status == RunStatus::BudgetExceeded);
         CHECK(result.error_code == RunErrorCode::ToolCallLimit);
         CHECK(result.tool_executions.size() == 1);
         CHECK(fixture.tool->calls == 1);
+
         REQUIRE(session.History().messages.size() == 2);
         CHECK(session.History().messages.back().role == agent::core::ChatRole::User);
     }
+
     SUBCASE("replayed result consumes output budget")
     {
         Fixture fixture;
@@ -553,9 +602,12 @@ TEST_CASE("tool budgets account for cached output and remove unfinished batches"
         {
             return Call();
         };
+
         agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
         const auto result = session.Send("execute");
+
         CHECK(result.error_code == RunErrorCode::ToolOutputLimit);
+
         CHECK(result.tool_attempts == 3);
         CHECK(fixture.tool->calls == 1);
         CHECK(session.History().messages.size() == 6);
@@ -578,12 +630,16 @@ TEST_CASE("run deadline is shared across model steps and is checked after callba
         std::this_thread::sleep_until(request.call.deadline + 1ms);
         return Answer();
     };
+
     agent::runtime::RunOptions options;
     options.timeout = 100ms;
     agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
+
     const auto result = session.Send("execute", options);
+
     CHECK(result.status == RunStatus::BudgetExceeded);
     CHECK(result.error_code == RunErrorCode::DeadlineExceeded);
+
     CHECK(result.steps == 2);
     CHECK(result.tool_executions.size() == 1);
     CHECK(session.History().messages.size() == 1);
@@ -593,20 +649,26 @@ TEST_CASE("structured preflight and model budget failures do not depend on error
 {
     Fixture fixture;
     agent::runtime::AgentSession session(fixture.profile, fixture.Runner(), {}, fixture.systems);
+
     CHECK(session.Send("").error_code == RunErrorCode::InvalidInput);
+
     agent::runtime::RunOptions options;
     options.timeout = 0ms;
     CHECK(session.Send("hello", options).error_code == RunErrorCode::InvalidConfiguration);
+
     std::stop_source stop;
     stop.request_stop();
     CHECK(session.Send("hello", stop.get_token()).status == RunStatus::Cancelled);
+
     fixture.profile.max_steps = 1;
     REQUIRE(session.SetProfile(fixture.profile));
     fixture.model->chat = [](const agent::core::ChatRequest&)
     {
         return Call();
     };
+
     const auto result = session.Send("execute");
+
     CHECK(result.status == RunStatus::BudgetExceeded);
     CHECK(result.error_code == RunErrorCode::ModelCallLimit);
     CHECK(result.steps == 1);
@@ -620,11 +682,14 @@ TEST_CASE("independent sessions keep metrics scoped")
     auto two_metrics = std::make_shared<agent::plugins::metrics::MetricsCollector>();
     first.systems->Add(one_metrics);
     second.systems->Add(two_metrics);
+
     agent::runtime::AgentSession one(first.profile, first.Runner(), {}, first.systems);
     agent::runtime::AgentSession two(second.profile, second.Runner(), {}, second.systems);
+
     CHECK(one.Send("one").Ok());
     CHECK(two.Send("two").Ok());
     CHECK(one.Send("again").Ok());
+
     CHECK(one_metrics->Snapshot().turns == 2);
     CHECK(two_metrics->Snapshot().turns == 1);
 }

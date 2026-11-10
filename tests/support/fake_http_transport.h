@@ -43,7 +43,10 @@ class FakeHttpTransport : public agent::transport::HttpTransport
     }
 
   private:
+    // 预设响应逻辑
     Handler m_handler;
+
+    // 最近一次请求与累计次数
     int m_request_count = 0;
     agent::transport::HttpRequest m_last_request;
 };

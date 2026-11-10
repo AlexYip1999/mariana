@@ -89,6 +89,7 @@ UsageSummary ScanTraceUsage(const std::filesystem::path& trace_directory, const 
                     }
                 }
 
+                // 每个 trace 文件只计一次 session。
                 if (!session_counted)
                 {
                     ++summary.sessions;
@@ -101,6 +102,7 @@ UsageSummary ScanTraceUsage(const std::filesystem::path& trace_directory, const 
             }
         }
     }
+
     return summary;
 }
 

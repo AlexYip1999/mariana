@@ -73,8 +73,10 @@ TEST_CASE("reads Unicode paths independently of the Windows code page")
     std::filesystem::create_directories(directory);
     WriteFile(directory / std::filesystem::path(u8"中😀.txt"), "unicode file");
     WriteFile(directory / ".ENV", "SECRET=1");
+
     agent::plugins::tools::ReadFileTool tool(workspace.Path());
     const auto result = tool.Execute(R"({"path":"目录😀/中😀.txt"})");
+
     CHECK(result.ok);
     CHECK(result.content == "unicode file");
     CHECK_FALSE(tool.Execute(R"({"path":"目录😀/.ENV"})").ok);
@@ -121,6 +123,7 @@ TEST_CASE("rejects sensitive files")
     {
         const std::string arguments = std::string("{\"path\":\"") + name + "\"}";
         const agent::core::ToolResult result = tool.Execute(arguments);
+
         CHECK_FALSE(result.ok);
         CHECK(result.error.find("sensitive file") != std::string::npos);
     }
@@ -141,6 +144,7 @@ TEST_CASE("rejects nested and case-variant sensitive files")
     for (const std::string& arguments : names)
     {
         const agent::core::ToolResult result = tool.Execute(arguments);
+
         CHECK_FALSE(result.ok);
         CHECK(result.error.find("sensitive file") != std::string::npos);
     }
@@ -167,14 +171,17 @@ TEST_CASE("rejects invalid read_file arguments")
     agent::plugins::tools::ReadFileTool tool(workspace.Path());
 
     const agent::core::ToolResult invalid_json = tool.Execute("{");
+
     CHECK_FALSE(invalid_json.ok);
     CHECK(invalid_json.error.find("invalid arguments JSON") != std::string::npos);
 
     const agent::core::ToolResult missing_path = tool.Execute("{}");
+
     CHECK_FALSE(missing_path.ok);
     CHECK(missing_path.error.find("requires a string path") != std::string::npos);
 
     const agent::core::ToolResult wrong_type = tool.Execute(R"({"path":123})");
+
     CHECK_FALSE(wrong_type.ok);
     CHECK(wrong_type.error.find("requires a string path") != std::string::npos);
 }
@@ -194,10 +201,12 @@ TEST_CASE("rejects absolute paths and workspace escapes")
         },
     };
     const agent::core::ToolResult absolute = tool.Execute(absolute_args.dump());
+
     CHECK_FALSE(absolute.ok);
     CHECK(absolute.error.find("absolute paths") != std::string::npos);
 
     const agent::core::ToolResult escape = tool.Execute(R"({"path":"../agent-core-tools-outside.txt"})");
+
     CHECK_FALSE(escape.ok);
     CHECK(escape.error.find("escapes workspace") != std::string::npos);
 
@@ -214,14 +223,17 @@ TEST_CASE("rejects directories and oversized files")
     agent::plugins::tools::ReadFileTool tool(workspace.Path(), 4);
 
     const agent::core::ToolResult directory = tool.Execute(R"({"path":"subdir"})");
+
     CHECK_FALSE(directory.ok);
     CHECK(directory.error.find("not a regular file") != std::string::npos);
 
     const agent::core::ToolResult too_large = tool.Execute(R"({"path":"large.txt"})");
+
     CHECK_FALSE(too_large.ok);
     CHECK(too_large.error.find("too large") != std::string::npos);
 
     const agent::core::ToolResult missing = tool.Execute(R"({"path":"missing.txt"})");
+
     CHECK_FALSE(missing.ok);
     CHECK((missing.error.find("file not found") != std::string::npos ||
            missing.error.find("cannot inspect file") != std::string::npos));

@@ -34,10 +34,13 @@ class ToolCatalog;
 /// Host 组合阶段需要的平台/配置输入。
 struct HostServicesConfig
 {
+    // 配置与运行输入
     CliConfig config;
     std::filesystem::path workspace;
     std::string session_id;
     std::string api_key;
+
+    // 依赖组件
     std::shared_ptr<CommandRegistry> commands;
     std::shared_ptr<ToolCatalog> tool_catalog;
     std::shared_ptr<transport::HttpTransport> transport;
@@ -46,12 +49,17 @@ struct HostServicesConfig
 /// Host 共享服务与会话作用域；不包含 Agent 和 executor。
 struct HostServices
 {
+    // 模型与两级服务作用域（host / 会话）
     std::shared_ptr<core::ChatModel> model;
     std::shared_ptr<runtime::ServiceRegistry> host_scope;
     std::shared_ptr<runtime::ServiceRegistry> session_scope;
+
+    // 系统注册表与可观测性组件
     std::shared_ptr<core::SystemRegistry> systems;
     std::shared_ptr<plugins::metrics::MetricsCollector> metrics;
     std::shared_ptr<plugins::traces::FileTracer> tracer;
+
+    // CLI 上下文与工具目录
     std::shared_ptr<CliContext> context;
     std::shared_ptr<ToolCatalog> tool_catalog;
 };

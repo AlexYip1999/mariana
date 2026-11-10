@@ -83,12 +83,14 @@ core::SummaryResult ModelSummarizer::Summarize(const core::SummaryRequest& reque
         return Fallback(request, "model summarizer has no ChatModel");
     }
 
+    // 采样参数固定：temperature 0 保证可复现，输出上限由 Config 决定。
     core::ChatRequest chat;
     chat.model = m_config.model;
     chat.temperature = 0.0;
     chat.max_tokens = m_config.max_tokens;
     chat.call = request.call;
 
+    // 系统消息携带“只重述、不新增”的约束，用户消息放待压缩轮次。
     core::ChatMessage system_message;
     system_message.role = core::ChatRole::System;
     system_message.content = m_config.system_prompt;
@@ -99,6 +101,7 @@ core::SummaryResult ModelSummarizer::Summarize(const core::SummaryRequest& reque
     user_message.content = "Compress these old conversation turns:\n\n" + RenderTurns(request.turns);
     chat.messages.push_back(std::move(user_message));
 
+    // 模型异常、失败或空结果都视为不可用，交给 fallback（若配置）。
     core::ChatResponse response;
     try
     {

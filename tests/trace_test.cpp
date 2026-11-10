@@ -52,18 +52,21 @@ TEST_CASE("trace truncation preserves Chinese and emoji at every byte boundary")
             {
                 content += character;
             }
+
             agent::core::ChatRequest request;
             request.messages.push_back({agent::core::ChatRole::User, content});
             agent::core::ChatResponse response;
             response.content = content;
             agent::core::ToolResult tool_result;
             tool_result.content = content;
+
             tracer.OnTurnStart();
             CHECK_NOTHROW(tracer.OnModelRequest(request));
             CHECK_NOTHROW(tracer.OnModelResponse(response));
             CHECK_NOTHROW(tracer.OnToolResult({}, tool_result));
             CHECK_NOTHROW(tracer.OnTurnEnd(false, content, 1));
             REQUIRE(sink->events.size() == 5);
+
             const std::size_t kept = prefix + (2000 - prefix) / character.size() * character.size();
             const std::string expected = content.substr(0, kept) + "... [truncated]";
             CHECK(sink->events[1]["last_content"] == expected);
@@ -96,9 +99,11 @@ TEST_CASE("file tracer correlates structured turn events with session and run id
     tracer.OnTurnEnded(end);
 
     REQUIRE(sink->events.size() == 2);
+
     CHECK(sink->events[0]["event"] == "turn_start");
     CHECK(sink->events[0]["session_id"] == "session-1");
     CHECK(sink->events[0]["run_id"] == "run-1");
+
     CHECK(sink->events[1]["event"] == "turn_end");
     CHECK(sink->events[1]["session_id"] == "session-1");
     CHECK(sink->events[1]["run_id"] == "run-1");
@@ -125,6 +130,7 @@ TEST_CASE("file tracer marks replayed tool results")
     tracer.OnToolReplayed(call, result);
 
     REQUIRE(sink->events.size() == 2);
+
     CHECK(sink->events[1]["event"] == "tool_result");
     CHECK(sink->events[1]["replayed"] == true);
     CHECK(sink->events[1]["content"] == "cached");
@@ -176,6 +182,7 @@ TEST_CASE("file tracer writes redacted jsonl events")
     }
 
     REQUIRE(events.size() == 6);
+
     CHECK(events[0]["event"] == "turn_start");
     CHECK(events[1]["event"] == "model_request");
     CHECK(events[2]["event"] == "model_response");

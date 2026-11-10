@@ -114,6 +114,7 @@ core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
         return response;
     }
 
+    // 组装 /chat/completions 请求体：messages、tools 与采样参数。
     nlohmann::json body;
     body["model"] = request.model.empty() ? m_config.model : request.model;
     body["messages"] = nlohmann::json::array();
@@ -196,6 +197,7 @@ core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
     http_request.body = DumpJson(body);
     http_request.timeout_ms = request.call.RemainingTimeoutMs(m_config.timeout_ms);
     http_request.stop_token = request.call.stop_token;
+
     if (http_request.timeout_ms <= 0)
     {
         response.error_code = core::CallError::DeadlineExceeded;
@@ -216,12 +218,14 @@ core::ChatResponse OpenAiChatModel::Chat(const core::ChatRequest& request)
         response.error = http_response.error;
         return response;
     }
+
     if (!http_response.Ok())
     {
         response.error = FormatHttpError(http_response);
         return response;
     }
 
+    // 解析响应体：choices → message → tool_calls / content / usage。
     try
     {
         const nlohmann::json parsed = nlohmann::json::parse(http_response.body);

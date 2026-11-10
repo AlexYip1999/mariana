@@ -70,6 +70,7 @@ std::shared_ptr<runtime::ToolRegistry> ToolCatalog::CreateRegistry(const std::fi
             error = "cannot create tool '" + entry.name + "'";
             return nullptr;
         }
+
         if (!registry->Register(std::move(tool), entry.descriptor, error))
         {
             return nullptr;
@@ -88,6 +89,7 @@ ToolCatalog DefaultToolCatalog()
     read_file.access_scope = runtime::ToolAccessScope::Read;
     read_file.approval = runtime::ToolApprovalMode::NotRequired;
     read_file.thread_affinity = "worker";
+
     (void)catalog.Add(
         "read_file",
         [](const std::filesystem::path& workspace)

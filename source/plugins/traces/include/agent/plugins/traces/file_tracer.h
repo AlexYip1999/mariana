@@ -41,10 +41,13 @@ class FileTracer : public core::Tracer
     std::string Timestamp() const;
     std::string Sanitize(std::string text) const;
 
+    // 输出目标与会话标识
     std::filesystem::path m_path;
     std::string m_session_id;
     std::string m_run_id;
     std::shared_ptr<TraceSink> m_sink;
+
+    // 当前轮/步状态与计时
     int m_turn = 0;
     int m_step = 0;
     std::string m_model;

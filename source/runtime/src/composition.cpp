@@ -35,6 +35,7 @@ CompositionValidation ValidateComposition(const RunnerDependencies& dependencies
         validation.issues.push_back({std::move(field), std::move(message)});
     };
 
+    // 依赖完整性：缺任一必需依赖都直接判失败。
     if (!dependencies.model)
     {
         add("model", "ChatModel is required");
@@ -68,6 +69,7 @@ CompositionValidation ValidateComposition(const RunnerDependencies& dependencies
         return validation;
     }
 
+    // 工具名与描述符校验：重复、未知工具、线程亲和性、审批与 side effect 策略。
     std::set<std::string> seen;
     for (const std::string& name : profile.tool_names)
     {
@@ -87,6 +89,7 @@ CompositionValidation ValidateComposition(const RunnerDependencies& dependencies
             add("tools", "missing descriptor for tool: " + name);
             continue;
         }
+
         if (!IsSupportedThreadAffinity(descriptor->thread_affinity))
         {
             add("thread_affinity",

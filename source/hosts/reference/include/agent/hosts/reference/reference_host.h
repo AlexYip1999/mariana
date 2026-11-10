@@ -115,14 +115,17 @@ class ReferenceHost
     void RequestStopAll();
     void JoinWorkers();
 
+    // 主线程队列与工具调度器；model / tools 为所有 Agent 共享
     std::shared_ptr<MainThreadQueue> m_main_queue;
     std::shared_ptr<MainThreadToolScheduler> m_scheduler;
     std::shared_ptr<core::ChatModel> m_model;
     std::shared_ptr<runtime::ToolRegistry> m_tools;
 
+    // Agent 表：由 m_agents_mutex 保护
     mutable std::mutex m_agents_mutex;
     std::unordered_map<std::string, std::shared_ptr<AgentState>> m_agents;
 
+    // worker 线程表与停止标志：线程表由 m_workers_mutex 保护
     mutable std::mutex m_workers_mutex;
     std::vector<std::shared_ptr<Worker>> m_workers;
     std::atomic<bool> m_stopping{false};

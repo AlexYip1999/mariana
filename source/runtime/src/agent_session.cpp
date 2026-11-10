@@ -76,6 +76,7 @@ bool PreflightFailure(const AgentProfile& profile, const std::string& user_input
     return false;
 }
 
+/// 估算单条消息的字符数（内容 + tool call 参数）；只用于压缩阈值，不追求精确。
 std::size_t EstimateMessageChars(const core::ChatMessage& message)
 {
     std::size_t total = message.content.size() + message.tool_call_id.size();
@@ -86,6 +87,7 @@ std::size_t EstimateMessageChars(const core::ChatMessage& message)
     return total;
 }
 
+/// 估算整段会话的字符数，用于判断是否达到压缩阈值。
 std::size_t EstimateConversationChars(const core::Conversation& conversation)
 {
     std::size_t total = 0;
@@ -96,11 +98,13 @@ std::size_t EstimateConversationChars(const core::Conversation& conversation)
     return total;
 }
 
+/// 是否为压缩写入的摘要 System 消息；用于替换旧摘要而不是累积。
 bool IsSummaryMessage(const core::ChatMessage& message)
 {
     return message.role == core::ChatRole::System && message.content.rfind(core::kSummaryMessagePrefix, 0) == 0;
 }
 
+/// 前导 System 消息的结束下标（system prompt 与摘要都位于这段）。
 std::size_t SystemPrefixEnd(const std::vector<core::ChatMessage>& messages)
 {
     std::size_t end = 0;
@@ -111,6 +115,7 @@ std::size_t SystemPrefixEnd(const std::vector<core::ChatMessage>& messages)
     return end;
 }
 
+/// 从 start 开始的 user 消息下标；压缩按 user turn 边界切分。
 std::vector<std::size_t> UserMessageIndices(const std::vector<core::ChatMessage>& messages, std::size_t start)
 {
     std::vector<std::size_t> indices;
@@ -124,6 +129,7 @@ std::vector<std::size_t> UserMessageIndices(const std::vector<core::ChatMessage>
     return indices;
 }
 
+/// 压缩调用的 deadline：沿用本轮的 turn_timeout_ms，避免摘要调用无限阻塞。
 core::CallContext MakeCompactionCall(const AgentProfile& profile)
 {
     const int timeout_ms = profile.turn_timeout_ms > 0 ? profile.turn_timeout_ms : 30000;
@@ -132,6 +138,7 @@ core::CallContext MakeCompactionCall(const AgentProfile& profile)
     return call;
 }
 
+/// 历史字符数达到阈值才压缩；policy 未启用或阈值为 0 时恒为 false。
 bool ShouldCompact(const AgentProfile& profile, const core::Conversation& conversation)
 {
     const MemoryPolicy& policy = profile.memory_policy;
@@ -145,6 +152,7 @@ bool ShouldCompact(const AgentProfile& profile, const core::Conversation& conver
 /// 把旧轮次压成一条摘要 System 消息；成功时替换 conversation。
 bool TryCompact(const AgentProfile& profile, core::Summarizer& summarizer, core::Conversation& conversation)
 {
+    // 切分点：保留最近 N 个 user turn 原文，更早的轮次交给摘要器。
     const MemoryPolicy& policy = profile.memory_policy;
     const std::size_t system_end = SystemPrefixEnd(conversation.messages);
     const std::vector<std::size_t> user_indices = UserMessageIndices(conversation.messages, system_end);
@@ -165,6 +173,7 @@ bool TryCompact(const AgentProfile& profile, core::Summarizer& summarizer, core:
         }
     }
 
+    // 只压缩切分点之前的旧轮次；字符上限与 deadline 由 MemoryPolicy/Profile 决定。
     core::SummaryRequest request;
     request.scope = policy.recall_scopes.empty() ? core::MemoryScope{} : policy.recall_scopes.front();
     request.max_chars = policy.compact_summary_max_chars;
@@ -176,6 +185,7 @@ bool TryCompact(const AgentProfile& profile, core::Summarizer& summarizer, core:
         return false;
     }
 
+    // 摘要失败或为空 = 不可用：保留原历史，不影响会话。
     core::SummaryResult result;
     try
     {
@@ -183,7 +193,6 @@ bool TryCompact(const AgentProfile& profile, core::Summarizer& summarizer, core:
     }
     catch (...)
     {
-        // 压缩失败保留原历史，不影响会话。
         return false;
     }
     if (!result.ok || result.summary.empty())
@@ -195,6 +204,7 @@ bool TryCompact(const AgentProfile& profile, core::Summarizer& summarizer, core:
         result.summary.resize(core::Utf8PrefixSize(result.summary, request.max_chars));
     }
 
+    // 用摘要替换旧轮次：前导 System 保持原序，最近 keep 轮保留原文。
     core::Conversation compacted;
     compacted.session_id = conversation.session_id;
     compacted.messages = std::move(prefix);
@@ -246,6 +256,7 @@ AgentRunResult AgentSession::Send(const std::string& user_input, const RunOption
         busy.error = "session already has an active turn";
         return busy;
     }
+
     AgentProfile profile;
     {
         std::lock_guard state_lock(m_state_mutex);
@@ -257,6 +268,7 @@ AgentRunResult AgentSession::Send(const std::string& user_input, const RunOption
     try
     {
         context = RunContext::Create(profile, m_session_id, options);
+
         AgentRunResult preflight;
         if (PreflightFailure(profile, user_input, context, preflight))
         {
@@ -331,6 +343,7 @@ void AgentSession::CompactIfNeeded()
         return;
     }
 
+    // 先复制快照，在锁外执行可能阻塞的摘要调用，最后回写；Turn 串行由 m_running 保证。
     AgentProfile profile;
     core::Conversation snapshot;
     {

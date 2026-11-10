@@ -113,6 +113,7 @@ void TurnTransaction::RemoveIncompleteBatch()
             pending.erase(message.tool_call_id);
         }
     }
+
     if (!pending.empty())
     {
         m_conversation.messages.resize(batch_start);

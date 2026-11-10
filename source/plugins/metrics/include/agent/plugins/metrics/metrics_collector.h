@@ -40,13 +40,17 @@ class MetricsCollector : public core::Tracer, public core::StatsView
     void ApplyUsage(const core::ChatResponse& response, double duration_seconds);
     void ApplyCost(const core::ChatUsage& usage);
 
+    // 配置与时钟依赖
     std::string m_provider;
     CostEstimator m_cost_estimator;
     std::int64_t m_context_window_tokens = 1000000;
     SteadyNow m_steady_now;
     SystemNow m_system_now;
 
+    // 累计指标快照
     MetricsSnapshot m_snapshot;
+
+    // 进行中的模型调用
     std::chrono::steady_clock::time_point m_request_start{};
     std::string m_request_model;
     bool m_request_active = false;

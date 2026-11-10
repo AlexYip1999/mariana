@@ -20,8 +20,12 @@ struct TurnEvent
     std::string status;
     std::string error_code;
     std::string error;
+
+    // 执行计数
     int steps = 0;
     std::size_t tool_attempts = 0;
+
+    // 结果标记
     bool ok = false;
     bool replayed = false;
 };

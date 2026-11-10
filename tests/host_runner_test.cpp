@@ -131,12 +131,15 @@ TEST_CASE("workspace changes preserve tool configuration until explicitly enable
         {
             return std::make_unique<FixedTransport>(requests);
         };
+
         std::ostringstream out;
         std::ostringstream err;
         const std::string input =
             "first\n/workspace .\nsecond\n/tools on\nthird\n/tools off\n/workspace .\nfourth\n/exit\n";
+
         CHECK(RunWithInput({"--config", "no-tools.json"}, environment, input, out, err) == 0);
         CHECK(err.str().empty());
+
         REQUIRE(requests->size() == 4);
         CHECK_FALSE((*requests)[0].contains("tools"));
         CHECK_FALSE((*requests)[1].contains("tools"));

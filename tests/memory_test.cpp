@@ -120,9 +120,11 @@ TEST_CASE("in-memory store recalls by text, tags and scope")
     agent::core::MemoryRecord tagged = MakeRecord("m-4", "娜洛的咖啡店", "agent", "npc-1");
     tagged.tags = {"shop", "phone"};
     REQUIRE(store.Remember(tagged, error));
+
     const std::vector<agent::core::MemoryHit> tagged_hits = store.Recall(tag_query);
     REQUIRE(tagged_hits.size() == 1);
     CHECK(tagged_hits.front().record.id == "m-4");
+
     CHECK(store.Recall(agent::core::MemoryQuery{}).size() == 4);
 }
 
@@ -150,6 +152,7 @@ TEST_CASE("in-memory store upserts, forgets and clears scope")
 
     REQUIRE(store.Remember(MakeRecord("w-1", "world event", "world", "village"), error));
     REQUIRE(store.Remember(MakeRecord("a-1", "agent event", "agent", "npc-1"), error));
+
     std::string clear_error;
     CHECK(store.ClearScope({"world", "village"}, clear_error));
     CHECK(store.Size() == 1);
@@ -173,6 +176,7 @@ TEST_CASE("rule based summarizer keeps recent content and respects budget")
     request.turns.push_back(MakeMessage(agent::core::ChatRole::Assistant, "第二个回答"));
     request.turns.push_back(MakeToolMessage("工具输出不应进入摘要", "call-1"));
     request.turns.push_back(MakeMessage(agent::core::ChatRole::User, "最后一句话"));
+
     const agent::core::SummaryResult result = summarizer.Summarize(request);
     CHECK(result.ok);
     CHECK(result.summary.find("第一句话") == std::string::npos);
@@ -209,6 +213,7 @@ TEST_CASE("runner injects recalled memory before the current user input")
     agent::core::Conversation conversation;
     const agent::runtime::AgentRunResult result =
         agent::tests::RunTurnForTest(runner, profile, conversation, "张三电话多少");
+
     CHECK(result.Ok());
     REQUIRE(model.requests.size() == 1);
 
@@ -216,6 +221,7 @@ TEST_CASE("runner injects recalled memory before the current user input")
     const std::size_t user_index = FindMessageIndex(model.requests.front().messages, "张三电话多少");
     REQUIRE(memory_index < model.requests.front().messages.size());
     REQUIRE(user_index < model.requests.front().messages.size());
+
     CHECK(memory_index < user_index);
     CHECK(model.requests.front().messages[memory_index].content.find("13800001111") != std::string::npos);
 }
@@ -236,9 +242,11 @@ TEST_CASE("memory recall is skipped when disabled or store throws")
 
     agent::runtime::AgentProfile profile;
     profile.system_prompt = "be brief";
+
     agent::core::Conversation conversation;
     const agent::runtime::AgentRunResult disabled =
         agent::tests::RunTurnForTest(disabled_runner, profile, conversation, "hello");
+
     CHECK(disabled.Ok());
     REQUIRE(model.requests.size() == 1);
     CHECK(FindMessageIndex(model.requests.front().messages, "<memory>") == model.requests.front().messages.size());
@@ -247,10 +255,12 @@ TEST_CASE("memory recall is skipped when disabled or store throws")
     auto throwing_dependencies = agent::tests::MakeRunnerDependencies(model, services);
     throwing_dependencies.memory = throwing;
     agent::runtime::AgentRunner throwing_runner(throwing_dependencies);
+
     profile.memory_policy.enable_recall = true;
     agent::core::Conversation throwing_conversation;
     const agent::runtime::AgentRunResult degraded =
         agent::tests::RunTurnForTest(throwing_runner, profile, throwing_conversation, "hello");
+
     CHECK(degraded.Ok());
     REQUIRE(model.requests.size() == 2);
     CHECK(FindMessageIndex(model.requests.back().messages, "<memory>") == model.requests.back().messages.size());

@@ -78,6 +78,8 @@ bool IsSecureEndpoint(const std::string& endpoint)
             return false;
         }
     }
+
+    // 拆出 scheme 与 authority，并统一转成小写
     const std::size_t separator = endpoint.find("://");
     if (separator == std::string::npos)
     {
@@ -97,6 +99,7 @@ bool IsSecureEndpoint(const std::string& endpoint)
             }
         }
     }
+
     if (authority.empty() || authority.find_first_of("@%") != std::string::npos)
     {
         return false;
@@ -117,6 +120,7 @@ bool IsSecureEndpoint(const std::string& endpoint)
     {
         host = host.substr(0, host.find(':'));
     }
+
     if (host.size() < authority.size())
     {
         if (authority[host.size()] != ':')
@@ -134,10 +138,12 @@ bool IsSecureEndpoint(const std::string& endpoint)
             return false;
         }
     }
+
     if (host.empty())
     {
         return false;
     }
+
     const bool is_loopback = host == "localhost" || host == "127.0.0.1" || host == "[::1]";
     return scheme == "https" || (scheme == "http" && is_loopback);
 }
@@ -211,9 +217,12 @@ ConfigLoadResult ParseCliConfig(const std::string& json_text, const CliConfig& b
             result.error = "endpoint must use https:// (http is only allowed for localhost)";
             return result;
         }
+
         result.config.model = parsed.value("model", result.config.model);
         result.config.api_key_env = parsed.value("api_key_env", result.config.api_key_env);
         result.config.system_prompt = parsed.value("system_prompt", result.config.system_prompt);
+
+        // 数值字段先校验范围，再逐项赋值
         const char* integer_fields[] = {"timeout_ms",           "max_tokens",      "max_steps",
                                         "max_context_chars",    "turn_timeout_ms", "max_tool_calls",
                                         "max_tool_output_bytes"};
@@ -231,6 +240,7 @@ ConfigLoadResult ParseCliConfig(const std::string& json_text, const CliConfig& b
                 return result;
             }
         }
+
         result.config.timeout_ms = parsed.value("timeout_ms", result.config.timeout_ms);
         result.config.max_tokens = parsed.value("max_tokens", result.config.max_tokens);
         result.config.max_steps = parsed.value("max_steps", result.config.max_steps);

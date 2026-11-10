@@ -88,8 +88,11 @@ class ScriptedTransport final : public agent::transport::HttpTransport
     }
 
   private:
+    // 响应队列
     std::mutex m_mutex;
     std::vector<agent::transport::HttpResponse> m_responses;
+
+    // 模拟网络耗时
     std::atomic<int> m_delay_ms{0};
 };
 
@@ -202,6 +205,7 @@ TEST_CASE("reference host delivers async result on the main thread queue")
     REQUIRE_FALSE(handle.Empty());
     PumpMainThread(host, done);
     REQUIRE(done.load());
+
     INFO("status=" << agent::runtime::ToString(callback_result.status) << " error=" << callback_result.error);
     CHECK(callback_thread == main_thread);
     CHECK(callback_run_id == handle.run_id);
@@ -228,6 +232,7 @@ TEST_CASE("reference host executes tools on the main thread")
     const std::thread::id main_thread = std::this_thread::get_id();
     std::atomic<bool> done{false};
     agent::runtime::AgentRunResult callback_result;
+
     host.SendAsync("npc-1", "use the tool",
                    [&](agent::runtime::AgentRunResult result)
                    {
@@ -236,6 +241,7 @@ TEST_CASE("reference host executes tools on the main thread")
                    });
     PumpMainThread(host, done);
     REQUIRE(done.load());
+
     CHECK(callback_result.Ok());
     CHECK(tool->Calls() == 1);
     CHECK(tool->ExecuteThread() == main_thread);
@@ -254,6 +260,7 @@ TEST_CASE("reference host cancel reports cancelled with the host assigned run id
     std::atomic<bool> done{false};
     agent::runtime::AgentRunResult callback_result;
     agent::hosts::reference::RunHandle handle;
+
     handle = host.SendAsync("npc-1", "hi",
                             [&](agent::runtime::AgentRunResult result)
                             {
@@ -261,9 +268,11 @@ TEST_CASE("reference host cancel reports cancelled with the host assigned run id
                                 done.store(true);
                             });
     REQUIRE_FALSE(handle.Empty());
+
     CHECK(host.Cancel(handle));
     PumpMainThread(host, done);
     REQUIRE(done.load());
+
     CHECK(callback_result.status == agent::runtime::RunStatus::Cancelled);
     CHECK(callback_result.run_id == handle.run_id);
 }
@@ -282,11 +291,13 @@ TEST_CASE("reference host rejects a concurrent turn on the same agent")
     std::atomic<bool> first_done{false};
     std::atomic<bool> second_done{false};
     agent::runtime::AgentRunResult second_result;
+
     host.SendAsync("npc-1", "first",
                    [&](agent::runtime::AgentRunResult)
                    {
                        first_done.store(true);
                    });
+
     const agent::hosts::reference::RunHandle rejected = host.SendAsync("npc-1", "second",
                                                                        [&](agent::runtime::AgentRunResult result)
                                                                        {
@@ -294,9 +305,11 @@ TEST_CASE("reference host rejects a concurrent turn on the same agent")
                                                                            second_done.store(true);
                                                                        });
     CHECK(rejected.Empty());
+
     PumpMainThread(host, second_done);
     REQUIRE(second_done.load());
     CHECK(second_result.status == agent::runtime::RunStatus::Busy);
+
     PumpMainThread(host, first_done);
     CHECK(first_done.load());
 }

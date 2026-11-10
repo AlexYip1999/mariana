@@ -50,6 +50,7 @@ std::vector<core::ChatMessage> KeepRecentTurnsPolicy::Prepare(const std::vector<
         return messages;
     }
 
+    // Leading system messages are always kept; trimming only drops whole turns after them.
     std::size_t system_end = 0;
     while (system_end < messages.size() && messages[system_end].role == core::ChatRole::System)
     {

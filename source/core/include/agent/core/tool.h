@@ -18,8 +18,11 @@ struct ToolSpec
 
 struct ToolResult
 {
+    // 结果
     bool ok = true;
     std::string content;
+
+    // 失败原因（ok=false 时由实现填写）
     std::string error;
     CallError error_code = CallError::None;
 };

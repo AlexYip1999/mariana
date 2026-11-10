@@ -91,6 +91,7 @@ bool InMemoryMemoryStore::Remember(const core::MemoryRecord& record, std::string
         error = "memory id is required";
         return false;
     }
+
     std::lock_guard lock(m_mutex);
     const auto existing = std::find_if(m_records.begin(), m_records.end(),
                                        [&record](const core::MemoryRecord& item)
@@ -145,6 +146,8 @@ std::vector<core::MemoryHit> InMemoryMemoryStore::Recall(const core::MemoryQuery
     {
         hits.resize(query.limit);
     }
+
+    // 超出字符预算时按排序顺序截断文本，尽量保留高分条目。
     if (query.max_chars > 0)
     {
         std::vector<core::MemoryHit> budgeted;
@@ -168,6 +171,7 @@ std::vector<core::MemoryHit> InMemoryMemoryStore::Recall(const core::MemoryQuery
         }
         hits = std::move(budgeted);
     }
+
     return hits;
 }
 

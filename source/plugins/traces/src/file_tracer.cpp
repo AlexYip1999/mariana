@@ -139,6 +139,7 @@ void FileTracer::StartTurn(const core::TurnEvent* event)
     ++m_turn;
     m_step = 0;
     m_turn_started = std::chrono::steady_clock::now();
+
     if (event != nullptr && !event->run_id.empty())
     {
         m_run_id = event->run_id;
@@ -241,6 +242,7 @@ void FileTracer::OnToolResult(const core::ToolCall& call, const core::ToolResult
     event["ok"] = result.ok;
     event["content"] = Sanitize(result.ok ? result.content : result.error);
     event["duration_ms"] = ElapsedMillis(m_tool_started);
+
     WriteEvent(event.dump());
 }
 
@@ -259,6 +261,7 @@ void FileTracer::OnToolReplayed(const core::ToolCall& call, const core::ToolResu
     event["content"] = Sanitize(result.ok ? result.content : result.error);
     event["replayed"] = true;
     event["duration_ms"] = 0;
+
     WriteEvent(event.dump());
 }
 
@@ -283,6 +286,7 @@ void FileTracer::EndTurn(const core::TurnEvent* event, bool ok, const std::strin
     event_json["ok"] = ok;
     event_json["error"] = Sanitize(error);
     event_json["steps"] = steps;
+
     if (event != nullptr)
     {
         event_json["status"] = event->status;
@@ -290,6 +294,7 @@ void FileTracer::EndTurn(const core::TurnEvent* event, bool ok, const std::strin
         event_json["tool_attempts"] = event->tool_attempts;
         event_json["replayed"] = event->replayed;
     }
+
     event_json["duration_ms"] = ElapsedMillis(m_turn_started);
     WriteEvent(event_json.dump());
 }
@@ -320,6 +325,8 @@ std::string FileTracer::Sanitize(std::string text) const
 {
     const std::string key_prefix = "sk-";
     std::size_t position = 0;
+
+    // 脱敏形如 sk-XXXXXXXX 的 API key（主体至少 8 位），短串保持原样。
     while ((position = text.find(key_prefix, position)) != std::string::npos)
     {
         std::size_t end = position + key_prefix.size();
@@ -349,6 +356,7 @@ std::string FileTracer::Sanitize(std::string text) const
         text.resize(core::Utf8PrefixSize(text, MAX_TRACE_TEXT));
         text += "... [truncated]";
     }
+
     return text;
 }
 

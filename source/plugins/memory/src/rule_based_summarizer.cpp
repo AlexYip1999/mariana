@@ -54,6 +54,7 @@ core::SummaryResult RuleBasedSummarizer::Summarize(const core::SummaryRequest& r
         }
         lines.push_back("- " + RoleName(it->role) + ": " + it->content);
     }
+
     std::reverse(lines.begin(), lines.end());
 
     for (const std::string& line : lines)
@@ -64,10 +65,13 @@ core::SummaryResult RuleBasedSummarizer::Summarize(const core::SummaryRequest& r
     {
         result.summary.pop_back();
     }
+
+    // 超出字符上限时按 UTF-8 边界安全截断，避免产生非法 UTF-8。
     if (request.max_chars > 0 && result.summary.size() > request.max_chars)
     {
         result.summary.resize(core::Utf8PrefixSize(result.summary, request.max_chars));
     }
+
     return result;
 }
 

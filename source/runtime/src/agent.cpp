@@ -14,15 +14,18 @@ std::shared_ptr<core::SystemRegistry> ResolveSystems(const std::shared_ptr<Agent
 {
     const auto scope_systems = scope ? scope->Get<core::SystemRegistry>() : nullptr;
     const auto executor_systems = executor ? executor->SystemRegistry() : nullptr;
+
     if (scope_systems && executor_systems && scope_systems != executor_systems)
     {
         throw std::invalid_argument("agent scope and executor use different SystemRegistry instances");
     }
+
     const auto systems = scope_systems ? scope_systems : executor_systems;
     if (systems && !scope_systems && scope)
     {
         scope->Set<core::SystemRegistry>(systems);
     }
+
     return systems;
 }
 

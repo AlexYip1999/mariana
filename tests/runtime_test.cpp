@@ -96,12 +96,15 @@ class FakeTracer : public agent::core::NullTracer
         m_last_steps = steps;
     }
 
+    // 各回调的触发次数
     int m_turns = 0;
     int m_model_requests = 0;
     int m_model_responses = 0;
     int m_tool_calls = 0;
     int m_tool_results = 0;
     int m_turn_ends = 0;
+
+    // 最近一次 turn 结束时的状态
     bool m_last_turn_ok = false;
     int m_last_steps = 0;
 };
@@ -169,9 +172,14 @@ class FakeTool : public agent::core::Tool
         return result;
     }
 
+    // 工具身份
     std::string m_name;
+
+    // 调用记录
     int m_calls = 0;
     std::string m_last_arguments;
+
+    // 预设返回内容
     std::string m_result_content = "ok";
 };
 
@@ -204,6 +212,7 @@ TEST_CASE("agent facade owns descriptor and session")
     agent_services.services = services;
     agent_services.executor = executor;
     agent::runtime::Agent agent(descriptor, MakeConfig(), agent_services, "session-1");
+
     CHECK(agent.Id().value == "npc-1");
     CHECK(agent.SessionId() == "session-1");
     CHECK(agent.SessionId() == agent.Session().Id());
@@ -212,6 +221,7 @@ TEST_CASE("agent facade owns descriptor and session")
     CHECK(agent.Dependencies().services == services);
 
     const agent::runtime::AgentRunResult result = agent.Send("hi");
+
     CHECK(result.Ok());
     CHECK(agent.History().messages.size() == 3);
     CHECK(tracer->m_turns == 1);
@@ -241,6 +251,7 @@ TEST_CASE("agent creates an empty scope when dependencies omit one")
     agent::runtime::AgentDependencies dependencies;
     dependencies.executor = executor;
     agent::runtime::Agent agent(descriptor, MakeConfig(), dependencies, "session-worker");
+
     REQUIRE(agent.Dependencies().services != nullptr);
     CHECK(agent.Send("hi").Ok());
     CHECK(agent.SessionId() == "session-worker");
@@ -264,6 +275,7 @@ TEST_CASE("agent rejects mismatched scope and executor system registries")
     agent::runtime::AgentDependencies agent_dependencies;
     agent_dependencies.services = scope;
     agent_dependencies.executor = std::make_shared<agent::runtime::AgentRunner>(dependencies);
+
     CHECK_THROWS_AS(agent::runtime::Agent(descriptor, MakeConfig(), agent_dependencies, "session-mismatch"),
                     std::invalid_argument);
 }
@@ -286,6 +298,7 @@ TEST_CASE("agent adopts executor systems when the scope has none")
     agent_dependencies.services = scope;
     agent_dependencies.executor = std::make_shared<agent::runtime::AgentRunner>(dependencies);
     agent::runtime::Agent agent(descriptor, MakeConfig(), agent_dependencies, "session-scope");
+
     CHECK(scope->Get<agent::core::SystemRegistry>() == systems);
     CHECK(agent.Send("hi").Ok());
 }
@@ -299,9 +312,11 @@ TEST_CASE("session keeps a bounded number of turn records")
     auto executor =
         std::make_shared<agent::runtime::AgentRunner>(agent::tests::MakeRunnerDependencies(model, services));
     agent::runtime::AgentSession session(MakeConfig(), executor, {}, nullptr, 2);
+
     REQUIRE(session.Send("one").Ok());
     REQUIRE(session.Send("two").Ok());
     REQUIRE(session.Send("three").Ok());
+
     CHECK(session.Records().size() == 2);
 }
 
@@ -316,9 +331,11 @@ TEST_CASE("session keeps conversation and system prompt")
     agent::runtime::AgentSession session(MakeConfig(), agent::tests::BorrowForTest(executor));
 
     const agent::runtime::AgentRunResult first = session.Send("hi");
+
     CHECK(first.Ok());
     CHECK(first.content == "hello");
     CHECK(session.History().messages.size() == 3);
+
     CHECK(model.requests.size() == 1);
     CHECK(model.requests[0].messages.size() == 2);
     CHECK(model.requests[0].messages[0].role == agent::core::ChatRole::System);
@@ -326,6 +343,7 @@ TEST_CASE("session keeps conversation and system prompt")
 
     model.response.content = "again";
     const agent::runtime::AgentRunResult second = session.Send("next");
+
     CHECK(second.Ok());
     CHECK(session.History().messages.size() == 5);
     CHECK(model.requests[1].messages.size() == 4);
@@ -346,11 +364,13 @@ TEST_CASE("session keeps failed turn messages")
     auto services = MakeServices();
     agent::runtime::AgentRunner executor(agent::tests::MakeRunnerDependencies(model, services));
     agent::runtime::AgentSession session(MakeConfig(), agent::tests::BorrowForTest(executor));
+
     const agent::runtime::AgentRunResult result = session.Send("hi");
 
     CHECK_FALSE(result.Ok());
     CHECK(result.error == "boom");
     CHECK(result.steps == 1);
+
     CHECK(session.History().messages.size() == 2);
     CHECK(session.History().messages[0].role == agent::core::ChatRole::System);
     CHECK(session.History().messages[1].role == agent::core::ChatRole::User);
@@ -405,6 +425,7 @@ TEST_CASE("agent runner executes tool calls until final answer")
     auto services = MakeServices();
     services.Set<agent::runtime::ToolRegistry>(tools);
     services.Set<agent::core::SystemRegistry>(systems);
+
     agent::runtime::AgentRunner runner(agent::tests::MakeRunnerDependencies(model, services));
     agent::runtime::AgentProfile profile;
     profile.max_steps = 4;
@@ -417,14 +438,18 @@ TEST_CASE("agent runner executes tool calls until final answer")
     CHECK(result.Ok());
     CHECK(result.content == "done");
     CHECK(result.steps == 2);
+
     CHECK(echo->m_calls == 1);
     CHECK(echo->m_last_arguments == R"({"x":1})");
+
     CHECK(conversation.messages.size() == 4);
     CHECK(conversation.messages[2].role == agent::core::ChatRole::Tool);
     CHECK(conversation.messages[2].tool_call_id == "call_1");
     CHECK(conversation.messages[2].content == "ok");
+
     CHECK(model.requests[0].tools.size() == 1);
     CHECK(model.requests[1].messages.size() == 3);
+
     CHECK(tracer->m_turns == 1);
     CHECK(tracer->m_model_requests == 2);
     CHECK(tracer->m_tool_calls == 1);
@@ -597,13 +622,16 @@ TEST_CASE("end observers run once and cannot change the turn outcome")
         systems->Add(recording);
         auto services = MakeServices();
         services.Set<agent::core::SystemRegistry>(systems);
+
         agent::runtime::AgentRunner runner(agent::tests::MakeRunnerDependencies(model, services));
         agent::core::Conversation conversation;
         const auto result = agent::tests::RunTurnForTest(runner, {}, conversation, "hi", systems);
+
         CHECK(result.Ok() == model_ok);
         CHECK(result.error == model.response.error);
         CHECK(result.content == model.response.content);
         CHECK(conversation.messages.size() == (model_ok ? 2 : 1));
+
         CHECK(throwing->m_turn_ends == 1);
         CHECK(recording->m_turn_ends == 1);
         CHECK(recording->m_last_turn_ok == model_ok);
@@ -619,20 +647,25 @@ TEST_CASE("profile changes replace remove and restore system prompts without los
     agent::runtime::AgentRunner runner(agent::tests::MakeRunnerDependencies(model, services));
     agent::runtime::AgentSession session(MakeConfig(), agent::tests::BorrowForTest(runner));
     REQUIRE(session.Send("first").Ok());
+
     auto profile = session.Profile();
     profile.system_prompt = "new instruction";
     session.SetProfile(profile);
     REQUIRE(session.Send("second").Ok());
+
     CHECK(model.requests.back().messages.front().content == "new instruction");
     CHECK(model.requests.back().messages[1].content == "first");
 
     profile.system_prompt.clear();
     session.SetProfile(profile);
     REQUIRE(session.Send("third").Ok());
+
     CHECK(model.requests.back().messages.front().role == agent::core::ChatRole::User);
+
     profile.system_prompt = "restored";
     session.SetProfile(profile);
     REQUIRE(session.Send("fourth").Ok());
+
     CHECK(model.requests.back().messages.front().content == "restored");
     CHECK(session.History().messages.size() == 9);
 }
@@ -647,6 +680,7 @@ TEST_CASE("context trimming retains complete tool turns and the newest oversized
         conversation.Append(agent::core::ChatRole::Assistant, "answer");
     }
     conversation.Append(agent::core::ChatRole::User, "latest");
+
     agent::core::ChatMessage assistant;
     assistant.role = agent::core::ChatRole::Assistant;
     assistant.tool_calls.push_back({"id", "echo", "{}"});
@@ -668,6 +702,7 @@ TEST_CASE("context trimming retains complete tool turns and the newest oversized
         REQUIRE(prepared[2].tool_calls.size() == 1);
         CHECK(prepared[2].tool_calls[0].id == prepared[3].tool_call_id);
     }
+
     CHECK(policy.Prepare(conversation.messages, 0).size() == conversation.messages.size());
     CHECK(conversation.messages.size() == 20004);
 }
@@ -677,7 +712,9 @@ TEST_CASE("tool output truncation preserves UTF-8 code points")
     agent::runtime::TruncateToolOutputPolicy policy;
     agent::runtime::ToolOutputBudget budget;
     budget.max_bytes = 5;
+
     const std::string result = policy.Limit({}, "中文", budget);
+
     CHECK(result == "中\n[truncated]");
     CHECK(budget.used_bytes == budget.max_bytes);
 }
@@ -707,27 +744,34 @@ TEST_CASE("cancelled turns restore history and propagate cancellation to the mod
     tool_response.ok = true;
     tool_response.tool_calls.push_back({"call", "echo", "{}"});
     model.responses = {tool_response, model.response};
+
     auto services = MakeServices();
     auto tools = std::make_shared<agent::runtime::ToolRegistry>();
     auto echo = std::make_shared<FakeTool>("echo");
     std::string error;
     REQUIRE(tools->Register(echo, error));
     services.Set<agent::runtime::ToolRegistry>(tools);
+
     auto tracer = std::make_shared<FakeTracer>();
     auto systems = std::make_shared<agent::core::SystemRegistry>();
     systems->Add(tracer);
     services.Set<agent::core::SystemRegistry>(systems);
+
     agent::runtime::AgentRunner runner(agent::tests::MakeRunnerDependencies(model, services));
     auto profile = MakeConfig();
     profile.tool_names = {"echo"};
     agent::runtime::AgentSession session(profile, agent::tests::BorrowForTest(runner), {}, systems);
+
     const auto result = session.Send("use echo", model.stop.get_token());
+
     CHECK_FALSE(result.Ok());
     CHECK(result.error.find("cancelled") != std::string::npos);
+
     CHECK(echo->m_calls == 1);
     REQUIRE(model.requests.size() == 2);
     CHECK(model.requests[0].call.stop_token == model.stop.get_token());
     CHECK(model.requests[1].call.stop_token == model.stop.get_token());
+
     REQUIRE(session.History().messages.size() == 1);
     CHECK(session.History().messages.front().content == profile.system_prompt);
     CHECK(tracer->m_turn_ends == 1);
@@ -737,6 +781,7 @@ TEST_CASE("cancelled turns restore history and propagate cancellation to the mod
     CHECK(model.requests.size() == 2);
     CHECK(tracer->m_turn_ends == 1);
     CHECK(session.Records().size() == 1);
+
     CHECK(session.Send("new turn").Ok());
     CHECK(session.History().messages.size() == 3);
 }
@@ -802,6 +847,7 @@ TEST_CASE("agent runner stops at max steps and keeps messages")
     CHECK_FALSE(result.Ok());
     CHECK(result.error.find("max steps") != std::string::npos);
     CHECK(result.steps == 2);
+
     CHECK(conversation.messages.size() == 5);
     CHECK(echo->m_calls == 1);
 }
@@ -832,6 +878,7 @@ TEST_CASE("agent runner feeds unknown tool errors back to model")
     CHECK(result.Ok());
     CHECK(result.content == "recovered");
     CHECK(result.steps == 2);
+
     REQUIRE(conversation.messages.size() == 4);
     CHECK(conversation.messages[2].role == agent::core::ChatRole::Tool);
     CHECK(conversation.messages[2].tool_call_id == "call_1");
@@ -860,6 +907,7 @@ TEST_CASE("agent session uses tool registry when present")
 
     agent::runtime::AgentSessionConfig config = MakeConfig();
     config.tool_names = {"echo"};
+
     auto services = MakeServices();
     services.Set<agent::runtime::ToolRegistry>(tools);
     agent::runtime::AgentRunner executor(agent::tests::MakeRunnerDependencies(model, services));
@@ -869,6 +917,7 @@ TEST_CASE("agent session uses tool registry when present")
 
     CHECK(result.Ok());
     CHECK(result.content == "done");
+
     CHECK(echo->m_calls == 1);
     CHECK(session.History().messages.size() == 5);
     CHECK(model.requests[0].tools.size() == 1);
@@ -1018,6 +1067,7 @@ TEST_CASE("composition validation rejects tools that require approval")
 
     agent::runtime::AgentProfile profile;
     profile.tool_names = {"write_file"};
+
     const agent::runtime::CompositionValidation validation = agent::runtime::ValidateComposition(dependencies, profile);
     CHECK_FALSE(validation.Ok());
     CHECK(validation.Describe().find("approval") != std::string::npos);
@@ -1030,7 +1080,9 @@ TEST_CASE("allowlist policy denies unlisted tools")
     allowed.name = "read_file";
     agent::core::ToolCall denied;
     denied.name = "write_file";
+
     std::string reason;
+
     CHECK(policy.Allow(allowed, reason));
     CHECK_FALSE(policy.Allow(denied, reason));
     CHECK(reason.find("allowlist") != std::string::npos);
@@ -1053,6 +1105,7 @@ TEST_CASE("context provider payload is injected before the current user input")
     agent::core::Conversation conversation;
     agent::runtime::AgentProfile profile;
     profile.system_prompt = "be brief";
+
     const agent::runtime::AgentRunResult result = agent::tests::RunTurnForTest(runner, profile, conversation, "hello");
 
     CHECK(result.Ok());
@@ -1080,6 +1133,7 @@ TEST_CASE("context provider payload is injected before the current user input")
             user_index = index;
         }
     }
+
     REQUIRE(context_index < messages.size());
     REQUIRE(user_index < messages.size());
     CHECK(context_index < user_index);
@@ -1102,11 +1156,13 @@ TEST_CASE("context provider failure fails closed and rolls back the turn")
     agent::core::Conversation conversation;
     agent::runtime::AgentProfile profile;
     profile.system_prompt = "be brief";
+
     const agent::runtime::AgentRunResult result = agent::tests::RunTurnForTest(runner, profile, conversation, "hello");
 
     CHECK(result.status == agent::runtime::RunStatus::Failed);
     CHECK(result.error_code == agent::runtime::RunErrorCode::ContextFailure);
     CHECK(result.error.find("world snapshot unavailable") != std::string::npos);
+
     CHECK(model.requests.empty());
     CHECK(conversation.messages.empty());
 }
@@ -1128,6 +1184,7 @@ TEST_CASE("provider context respects max_context_chars budget")
     agent::runtime::AgentProfile profile;
     profile.system_prompt = "be brief";
     profile.max_context_chars = 80;
+
     const agent::runtime::AgentRunResult result = agent::tests::RunTurnForTest(runner, profile, conversation, "hello");
 
     CHECK(result.Ok());
@@ -1143,6 +1200,7 @@ TEST_CASE("provider context respects max_context_chars budget")
             injected_size = message.content.size();
         }
     }
+
     REQUIRE(injected_size > 0);
     // 已用消息（"be brief" + "hello" = 13 字符）之外的全部内容都必须落在 80 字符预算内。
     CHECK(injected_size <= 80 - 13);
@@ -1185,6 +1243,7 @@ TEST_CASE("host assigned run id flows through the turn result")
     agent::runtime::RunOptions options;
     options.run_id = "run-42";
     const agent::runtime::RunContext context = agent::runtime::RunContext::Create(profile, "session-42", options);
+
     CHECK(context.session_id == "session-42");
     CHECK(context.run_id == "run-42");
 
@@ -1192,6 +1251,7 @@ TEST_CASE("host assigned run id flows through the turn result")
     agent::core::SystemRegistry systems;
     const agent::runtime::TurnExecution execution =
         agent::runtime::ExecuteTurn(profile, conversation, runner, "hello", context, systems);
+
     CHECK(execution.result.Ok());
     CHECK(execution.result.run_id == "run-42");
     CHECK(execution.result.session_id == "session-42");

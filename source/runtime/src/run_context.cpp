@@ -16,6 +16,7 @@ RunContext RunContext::Create(const AgentProfile& profile, const std::string& se
     {
         throw std::invalid_argument("turn timeout must be a positive supported millisecond value");
     }
+
     RunContext context;
     context.session_id = session_id.empty() ? ExecutionId::NewSession() : session_id;
     context.run_id = options.run_id.empty() ? ExecutionId::NewRun() : options.run_id;

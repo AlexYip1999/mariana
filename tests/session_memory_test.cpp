@@ -102,6 +102,7 @@ TEST_CASE("session compacts old turns into a summary and keeps recent turns")
     services.Set<agent::runtime::ToolPolicy>(std::make_shared<agent::runtime::AllowAllToolPolicy>());
     services.Set<agent::runtime::ContextPolicy>(std::make_shared<agent::runtime::KeepRecentTurnsPolicy>());
     services.Set<agent::runtime::ToolOutputPolicy>(std::make_shared<agent::runtime::TruncateToolOutputPolicy>());
+
     auto dependencies = agent::tests::MakeRunnerDependencies(model, services);
     auto summarizer = MakeSummarizer();
     dependencies.summarizer = summarizer;
@@ -129,6 +130,7 @@ TEST_CASE("session compacts old turns into a summary and keeps recent turns")
     CHECK(CountRole(history, agent::core::ChatRole::User) == 2);
     CHECK(history.messages[2].content == "turn-2");
     CHECK(history.messages[4].content == "turn-3");
+
     REQUIRE(summarizer->requests.size() == 1);
     CHECK(summarizer->requests.front().max_chars == 2000);
     CHECK(summarizer->requests.front().turns.size() == 2);
@@ -163,6 +165,7 @@ TEST_CASE("session keeps history when compaction fails or is disabled")
     agent::runtime::AgentDependencies failing_agent_dependencies;
     failing_agent_dependencies.executor = std::make_shared<agent::runtime::AgentRunner>(failing_dependencies);
     agent::runtime::Agent failing_agent(descriptor, failing_profile, failing_agent_dependencies, "session-failing");
+
     REQUIRE(failing_agent.Send("turn-1").Ok());
     REQUIRE(failing_agent.Send("turn-2").Ok());
     const agent::core::Conversation failing_history = failing_agent.History();
@@ -184,6 +187,7 @@ TEST_CASE("session keeps history when compaction fails or is disabled")
     disabled_agent_dependencies.executor = std::make_shared<agent::runtime::AgentRunner>(disabled_dependencies);
     agent::runtime::Agent disabled_agent(disabled_descriptor, disabled_profile, disabled_agent_dependencies,
                                          "session-disabled");
+
     REQUIRE(disabled_agent.Send("turn-1").Ok());
     REQUIRE(disabled_agent.Send("turn-2").Ok());
     CHECK(CountRole(disabled_agent.History(), agent::core::ChatRole::User) == 2);
@@ -199,16 +203,20 @@ TEST_CASE("model summarizer calls the chat model with deterministic settings")
     agent::plugins::memory::ModelSummarizer::Config config;
     config.model = "cheap-model";
     config.max_tokens = 32;
+
     agent::plugins::memory::ModelSummarizer summarizer(model, config);
     const agent::core::SummaryRequest request = MakeSummaryRequest();
 
     const agent::core::SummaryResult result = summarizer.Summarize(request);
+
     CHECK(result.ok);
     CHECK(result.summary == "compressed summary");
+
     REQUIRE(model->requests.size() == 1);
     CHECK(model->requests.front().model == "cheap-model");
     CHECK(model->requests.front().temperature == 0.0);
     CHECK(model->requests.front().max_tokens == 32);
+
     REQUIRE(model->requests.front().messages.size() == 2);
     CHECK(model->requests.front().messages[0].role == agent::core::ChatRole::System);
     CHECK(model->requests.front().messages[1].content.find("13800001111") != std::string::npos);
@@ -224,18 +232,21 @@ TEST_CASE("model summarizer truncates and falls back on failure")
     agent::plugins::memory::ModelSummarizer summarizer(model, config);
     agent::core::SummaryRequest request = MakeSummaryRequest();
     request.max_chars = 10;
+
     const agent::core::SummaryResult truncated = summarizer.Summarize(request);
     CHECK(truncated.ok);
     CHECK(truncated.summary.size() <= 10);
 
     model->response = {};
     model->response.error = "provider down";
+
     const agent::core::SummaryResult failed = summarizer.Summarize(request);
     CHECK_FALSE(failed.ok);
     CHECK(failed.error.find("provider down") != std::string::npos);
 
     auto fallback = std::make_shared<agent::plugins::memory::RuleBasedSummarizer>(4);
     agent::plugins::memory::ModelSummarizer fallback_summarizer(model, config, fallback);
+
     const agent::core::SummaryResult recovered = fallback_summarizer.Summarize(MakeSummaryRequest());
     CHECK(recovered.ok);
     CHECK(recovered.summary.find("13800001111") != std::string::npos);
