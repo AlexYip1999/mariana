@@ -419,7 +419,7 @@ RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& work
             const CompositionValidation validation = ValidateComposition(m_dependencies, profile);
             if (!validation.Ok())
             {
-                outcome = { RunStatus::Failed, RunErrorCode::InvalidConfiguration, validation.Describe() };
+                outcome = {RunStatus::Failed, RunErrorCode::InvalidConfiguration, validation.Describe()};
             }
             else
             {
