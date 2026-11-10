@@ -15,5 +15,6 @@
   "max_context_chars": 120000,
   "tool_names": [
     "read_file"
-  ]
+  ],
+  "memory_path": ""
 }

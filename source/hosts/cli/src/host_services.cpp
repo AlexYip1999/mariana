@@ -5,6 +5,7 @@
 
 #include "agent/hosts/cli/tool_catalog.h"
 #include "agent/model/openai_chat_model.h"
+#include "agent/plugins/memory/jsonl_memory_store.h"
 #include "agent/plugins/metrics/metrics_collector.h"
 #include "agent/plugins/traces/file_tracer.h"
 
@@ -35,6 +36,18 @@ std::optional<HostServices> BuildHostServices(const HostServicesConfig& input, s
         return std::nullopt;
     }
 
+    // 长期记忆默认关闭；打开失败直接拒绝启动，避免静默丢记忆。
+    if (!input.config.memory_path.empty())
+    {
+        std::string memory_error;
+        services.memory = plugins::memory::JsonlMemoryStore::Open(input.config.memory_path, memory_error);
+        if (!services.memory)
+        {
+            error = "cannot open memory store (" + input.config.memory_path + "): " + memory_error;
+            return std::nullopt;
+        }
+    }
+
     services.systems = std::make_shared<core::SystemRegistry>();
     services.systems->Add(services.metrics);
     services.systems->Add(services.tracer);
@@ -49,6 +62,8 @@ std::optional<HostServices> BuildHostServices(const HostServicesConfig& input, s
     services.context->trace_dir = "traces";
     services.context->current_trace_path = services.tracer->Path().string();
     services.context->tool_catalog = input.tool_catalog;
+    services.context->memory = services.memory;
+    services.context->memory_path = input.config.memory_path;
 
     // Stateful observers and UI state belong to this session, not the shared host scope.
     services.session_scope = std::make_shared<runtime::ServiceRegistry>(services.host_scope);

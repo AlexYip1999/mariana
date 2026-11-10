@@ -11,11 +11,13 @@ namespace agent::hosts::cli
 {
 
 AgentFactory::AgentFactory(CliConfig config, std::shared_ptr<core::ChatModel> model,
-                           std::shared_ptr<core::SystemRegistry> systems, std::shared_ptr<ToolCatalog> tool_catalog)
+                           std::shared_ptr<core::SystemRegistry> systems, std::shared_ptr<ToolCatalog> tool_catalog,
+                           std::shared_ptr<core::MemoryStore> memory)
     : m_config(std::move(config))
     , m_model(std::move(model))
     , m_systems(std::move(systems))
     , m_tool_catalog(std::move(tool_catalog))
+    , m_memory(std::move(memory))
 {}
 
 std::shared_ptr<runtime::AgentRunner> AgentFactory::CreateExecutor(const std::filesystem::path& workspace) const
@@ -57,6 +59,12 @@ runtime::AgentProfile AgentFactory::MakeProfile() const
     profile.max_tool_output_bytes = m_config.max_tool_output_bytes;
     profile.max_context_chars = m_config.max_context_chars;
     profile.tool_names = m_config.tool_names;
+    if (m_memory)
+    {
+        // 记忆开启时每轮自动召回；作用域固定为 CLI 共享 scope，跨 session 复用同一 JSONL。
+        profile.memory_policy.enable_recall = true;
+        profile.memory_policy.recall_scopes = {CliMemoryScope()};
+    }
     return profile;
 }
 
@@ -71,6 +79,7 @@ runtime::RunnerDependencies AgentFactory::MakeRunnerDependencies(
     dependencies.tool_output_policy = std::make_shared<runtime::TruncateToolOutputPolicy>();
     dependencies.tool_scheduler = std::make_shared<runtime::InlineToolScheduler>();
     dependencies.systems = m_systems;
+    dependencies.memory = m_memory;
     return dependencies;
 }
 

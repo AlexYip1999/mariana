@@ -15,6 +15,9 @@ $env:DEEPSEEK_API_KEY = "..."
 
 # 显式配置
 .\build\vs2022\bin\Debug\agent-cli.exe --config .\my-config.json
+
+# 打开 JSONL 长期记忆（跨会话）
+.\build\vs2022\bin\Debug\agent-cli.exe --memory .\memory.jsonl
 ```
 
 启动只接受：
@@ -23,6 +26,7 @@ $env:DEEPSEEK_API_KEY = "..."
 --help
 --version
 --config <path>
+--memory <path>
 ```
 
 ## 交互命令
@@ -35,6 +39,10 @@ $env:DEEPSEEK_API_KEY = "..."
 | `/config init` | 写 `config.local.json` |
 | `/workspace <path>` | 切换工具工作区 |
 | `/tools on\|off` | 开/关工具 |
+| `/memory` | 记忆状态（路径 + 记录数） |
+| `/memory list` | 列出 `cli:default` 作用域记忆 |
+| `/memory add <text>` | 写入一条 Fact 记忆 |
+| `/memory clear` | 清空 `cli:default` 作用域记忆 |
 | `/trace` | 查看当前 trace |
 | `/trace show [file]` | 查看当前或指定 trace |
 | `/stats` | 当前会话统计 |
@@ -52,6 +60,25 @@ $env:DEEPSEEK_API_KEY = "..."
 > /trace
 > /stats today
 > /exit
+```
+
+## 长期记忆（JSONL）
+
+`--memory <path>` 打开 JSONL 长期记忆（也可在配置里写 `memory_path`；命令行优先）。实现是
+`agent::plugins::memory::JsonlMemoryStore`：追加式操作日志，重启后逐行重放恢复，父目录自动创建。
+
+- 记忆作用域固定为 `cli:default`，`AgentFactory` 打开 `memory_policy.enable_recall`，
+  每轮按当前输入召回并注入 `<memory>` System 消息；
+- 打开失败（路径不可用 / 文件损坏）拒绝启动；单次写入失败由 `/memory add` 输出错误；
+- 交互命令：`/memory`（状态）、`/memory list`、`/memory add <text>`、`/memory clear`。
+
+跨会话演示：
+
+```text
+> /memory add 张三的电话是 13800001111
+> /exit
+# 重新启动同一 --memory 文件
+> 张三的电话是多少          # 召回 <memory> 后由模型回答
 ```
 
 ## Trace
@@ -108,7 +135,7 @@ read_file({"path":"relative/path.txt"})
 - cwd 配置若修改 `endpoint`、`api_key_env`、`model` 或 `system_prompt`，默认拒绝；
 - `--config <path>` 显式指定时只加载该文件。
 
-配置项：`provider`、`cost_currency`、`endpoint`、`model`、`api_key_env`、`system_prompt`、`timeout_ms`、`max_tokens`、`max_steps`、`turn_timeout_ms`、`max_tool_calls`、`max_tool_output_bytes`、`temperature`、`max_context_chars`、`tool_names`。
+配置项：`provider`、`cost_currency`、`endpoint`、`model`、`api_key_env`、`system_prompt`、`timeout_ms`、`max_tokens`、`max_steps`、`turn_timeout_ms`、`max_tool_calls`、`max_tool_output_bytes`、`temperature`、`max_context_chars`、`tool_names`、`memory_path`。
 
 API key 只从环境变量读，默认 `DEEPSEEK_API_KEY`。
 
@@ -120,6 +147,7 @@ API key 只从环境变量读，默认 `DEEPSEEK_API_KEY`。
 
 - A2 CLI：最小启动参数 + `CommandRegistry` 交互命令插件；
 - 命令实现为 `CliCommand`，`/help` 自动列出注册命令；
+- Memory Phase 2：`--memory` JSONL 持久化 + `/memory` 交互命令（跨会话召回）；
 - 组合根拆为：
   - `RunHost`：参数/配置/transport/workspace 编排；
   - `HostServices`：model/metrics/tracer/systems/scope/CliContext；

@@ -56,6 +56,7 @@ target_include_directories(agent_host_reference_tests PRIVATE ${CMAKE_CURRENT_SO
 target_link_libraries(agent_host_reference_tests PRIVATE agent_host_reference agent_third_party)
 
 add_executable(agent_memory_tests
+    jsonl_memory_store_test.cpp
     memory_test.cpp
     session_memory_test.cpp
 )

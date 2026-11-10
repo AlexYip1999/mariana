@@ -1,5 +1,7 @@
 #include "agent/hosts/cli/tool_catalog.h"
 
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <ostream>
@@ -8,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "agent/core/utf8.h"
 #include "agent/core/version.h"
 #include "agent/hosts/cli/cli_command.h"
 #include "agent/plugins/tools/read_file_tool.h"
@@ -62,6 +65,23 @@ std::filesystem::path ResolveTracePath(const CliContext& context, const std::str
     return path;
 }
 
+constexpr std::size_t kMemoryListTextLimit = 80;
+
+std::int64_t NowMillis()
+{
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+}
+
+/// CLI 记忆统一读写固定作用域；limit=0 表示不限制条数。
+std::vector<core::MemoryHit> RecallCliMemories(core::MemoryStore& memory)
+{
+    core::MemoryQuery query;
+    query.scopes = {CliMemoryScope()};
+    query.limit = 0;
+    return memory.Recall(query);
+}
+
 void PrintConfig(std::ostream& out, const CliConfig& config, const runtime::AgentProfile& profile)
 {
     out << "config:\n"
@@ -77,6 +97,7 @@ void PrintConfig(std::ostream& out, const CliConfig& config, const runtime::Agen
         << "  max_context_chars=" << profile.max_context_chars << "\n"
         << "  temperature=" << profile.temperature << "\n"
         << "  cost_currency=" << config.cost_currency << "\n"
+        << "  memory_path=" << (config.memory_path.empty() ? "(disabled)" : config.memory_path) << "\n"
         << "  tool_names=";
     for (const auto& name : profile.tool_names)
     {
@@ -248,6 +269,101 @@ class ToolsCommand final : public CliCommand
             return CommandResult::Handled;
         }
         out << "tools: " << args << "\n";
+        return CommandResult::Handled;
+    }
+};
+
+class MemoryCommand final : public CliCommand
+{
+  public:
+    std::string Name() const override
+    {
+        return "memory";
+    }
+
+    std::string Usage() const override
+    {
+        return "/memory [list | add <text> | clear]";
+    }
+
+    CommandResult Execute(CliContext& context, runtime::Agent&, const std::string& args, std::ostream& out,
+                          std::ostream& err) override
+    {
+        if (!context.memory)
+        {
+            out << "memory: disabled (start agent-cli with --memory <path>)\n";
+            return CommandResult::Handled;
+        }
+
+        const std::pair<std::string, std::string> sub = SplitCommand(args);
+        if (args.empty())
+        {
+            out << "memory: " << context.memory_path << " (" << RecallCliMemories(*context.memory).size()
+                << " records)\n";
+            return CommandResult::Handled;
+        }
+
+        if (sub.first == "list")
+        {
+            const std::vector<core::MemoryHit> hits = RecallCliMemories(*context.memory);
+            if (hits.empty())
+            {
+                out << "memory is empty\n";
+                return CommandResult::Handled;
+            }
+            for (const core::MemoryHit& hit : hits)
+            {
+                std::string text = hit.record.text;
+                if (text.size() > kMemoryListTextLimit)
+                {
+                    text = text.substr(0, core::Utf8PrefixSize(text, kMemoryListTextLimit));
+                }
+                out << hit.record.id << " [" << core::ToString(hit.record.kind) << "] " << text << "\n";
+            }
+            return CommandResult::Handled;
+        }
+
+        if (sub.first == "add")
+        {
+            if (sub.second.empty())
+            {
+                out << "usage: /memory add <text>\n";
+                return CommandResult::Handled;
+            }
+            const std::int64_t now = NowMillis();
+            core::MemoryRecord record;
+            record.id = "cli-" + std::to_string(now);
+            record.kind = core::MemoryKind::Fact;
+            record.text = sub.second;
+            record.tags = {"cli"};
+            record.importance = 0.5;
+            record.confidence = 1.0;
+            record.scope = CliMemoryScope();
+            record.created_at = now;
+            record.updated_at = now;
+            std::string error;
+            if (!context.memory->Remember(record, error))
+            {
+                err << "memory add failed: " << error << "\n";
+                return CommandResult::Handled;
+            }
+            out << "remembered " << record.id << "\n";
+            return CommandResult::Handled;
+        }
+
+        if (sub.first == "clear")
+        {
+            std::string error;
+            if (!context.memory->ClearScope(CliMemoryScope(), error))
+            {
+                err << "memory clear failed: " << error << "\n";
+                return CommandResult::Handled;
+            }
+            out << "memory cleared\n";
+            return CommandResult::Handled;
+        }
+
+        err << "usage: " << Usage() << "\n";
         return CommandResult::Handled;
     }
 };
@@ -429,6 +545,7 @@ void RegisterDefaultCommands(CommandRegistry& registry)
     registry.Add(std::make_shared<ConfigCommand>());
     registry.Add(std::make_shared<WorkspaceCommand>());
     registry.Add(std::make_shared<ToolsCommand>());
+    registry.Add(std::make_shared<MemoryCommand>());
     registry.Add(std::make_shared<TraceCommand>());
     registry.Add(std::make_shared<StatsCommand>());
     registry.Add(std::make_shared<ClearCommand>());

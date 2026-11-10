@@ -283,3 +283,41 @@ TEST_CASE("host runner rejects unknown tool names at startup")
     }
     std::filesystem::remove_all(workspace);
 }
+
+TEST_CASE("host runner persists jsonl memory and recalls it in a later session")
+{
+    const std::filesystem::path workspace = MakeTempWorkspace();
+    {
+        ScopedWorkingDirectory scoped(workspace);
+        const std::filesystem::path memory_path = workspace / "memory.jsonl";
+        auto requests = std::make_shared<std::vector<nlohmann::json>>();
+        auto environment = MakeEnvironment({{"DEEPSEEK_API_KEY", "test-key"}});
+        environment.create_transport = [requests]()
+        {
+            return std::make_unique<FixedTransport>(requests);
+        };
+
+        // 第一个会话：写入记忆，并验证同会话内召回注入。
+        std::ostringstream out;
+        std::ostringstream err;
+        const std::string first_input = "/memory add 用户的电话是 13800001111\n/memory list\n电话\n/exit\n";
+        CHECK(RunWithInput({"--memory", memory_path.string()}, environment, first_input, out, err) == 0);
+        CHECK(out.str().find("remembered cli-") != std::string::npos);
+        CHECK(out.str().find("13800001111") != std::string::npos);
+        CHECK(std::filesystem::exists(memory_path));
+        REQUIRE(requests->size() == 1);
+        CHECK((*requests)[0].dump().find("13800001111") != std::string::npos);
+
+        // 第二个会话：重新加载同一 JSONL，验证跨会话持久化与召回，随后清空。
+        requests->clear();
+        out.str("");
+        err.str("");
+        const std::string second_input = "电话\n/memory clear\n/memory\n/exit\n";
+        CHECK(RunWithInput({"--memory", memory_path.string()}, environment, second_input, out, err) == 0);
+        REQUIRE(requests->size() == 1);
+        CHECK((*requests)[0].dump().find("13800001111") != std::string::npos);
+        CHECK(out.str().find("memory cleared") != std::string::npos);
+        CHECK(out.str().find("(0 records)") != std::string::npos);
+    }
+    std::filesystem::remove_all(workspace);
+}

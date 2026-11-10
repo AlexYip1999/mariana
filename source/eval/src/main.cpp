@@ -20,9 +20,11 @@
 #include <nlohmann/json.hpp>
 
 #include "agent/core/chat_model.h"
+#include "agent/core/memory.h"
 #include "agent/core/message.h"
 #include "agent/core/system_registry.h"
 #include "agent/model/openai_chat_model.h"
+#include "agent/plugins/memory/in_memory_store.h"
 #include "agent/plugins/tools/read_file_tool.h"
 #include "agent/runtime/agent.h"
 #include "agent/runtime/agent_profile.h"
@@ -56,6 +58,8 @@ constexpr const char* kWorkspaceDirectoryName = "workspace";
 constexpr const char* kApiKeyEnvironmentName = "DEEPSEEK_API_KEY";
 constexpr const char* kAgentName = "agent-eval";
 constexpr const char* kAgentVersion = "0.1.0";
+constexpr const char* kDefaultMemoryScopeKind = "cli";
+constexpr const char* kDefaultMemoryScopeId = "default";
 
 /// CLI 解析后的运行配置。
 struct CliOptions
@@ -90,11 +94,12 @@ struct TaskExpectation
     std::optional<std::vector<std::string>> tool_names;
     std::optional<std::vector<bool>> tool_results_ok;
 
-    // 最终回答内容
+    // 最终回答内容与召回注入
     std::optional<std::string> content_contains;
+    std::optional<std::string> request_contains;
 };
 
-/// 一条评测任务：输入、执行预算、mock 脚本与期望。
+/// 一条评测任务：输入、记忆种子、执行预算、mock 脚本与期望。
 struct EvalTask
 {
     // 标识与说明
@@ -106,10 +111,16 @@ struct EvalTask
     std::string input;
     std::string system_prompt = kDefaultSystemPrompt;
 
+    // 多轮输入：首次 input 之后依次对同一 Agent 继续 Send
+    std::vector<std::string> follow_up_inputs;
+
     // 执行预算
     int max_steps = kDefaultMaxSteps;
     std::size_t max_tool_calls = kDefaultMaxToolCalls;
     std::size_t max_tool_output_bytes = kDefaultMaxToolOutputBytes;
+
+    // 长期记忆种子：非空时写入 InMemoryMemoryStore 并启用召回
+    std::vector<core::MemoryRecord> memory;
 
     // mock 模式脚本：按顺序返回的模型响应
     std::vector<core::ChatResponse> script;
@@ -147,6 +158,9 @@ struct TaskResult
     int model_calls = 0;
     std::int64_t tokens = 0;
 
+    // 召回注入实测：是否满足 expect.request_contains（未要求时为 false）
+    bool request_contains = false;
+
     // 耗时
     std::int64_t latency_ms = 0;
 };
@@ -154,8 +168,12 @@ struct TaskResult
 /// 一次执行尝试：setup_error 非空表示会话没有跑起来。
 struct RunAttempt
 {
-    std::string setup_error;
+    // 首轮执行结果
     runtime::AgentRunResult result;
+    std::string setup_error;
+
+    // 多轮复用：首次 Send 之后继续执行 follow_up_inputs
+    std::shared_ptr<runtime::Agent> agent;
 };
 
 /// 任务 JSON 格式错误；LoadTasks 捕获后统一转成可读错误。
@@ -237,6 +255,49 @@ class TrackingChatModel final : public core::ChatModel
     int m_calls = 0;
 };
 
+/// 模型装饰器：记录每次 ChatRequest 拷贝，用于验证召回内容是否真的注入了 prompt。
+class RecordingChatModel final : public core::ChatModel
+{
+  public:
+    explicit RecordingChatModel(std::shared_ptr<core::ChatModel> inner)
+        : m_inner(std::move(inner))
+    {}
+
+    core::ChatResponse Chat(const core::ChatRequest& request) override
+    {
+        m_requests.push_back(request);
+        if (!m_inner)
+        {
+            core::ChatResponse response;
+            response.ok = false;
+            response.error = "chat model is not configured";
+            response.error_code = core::CallError::ModelFailure;
+            return response;
+        }
+        return m_inner->Chat(request);
+    }
+
+    /// 整个任务期间是否有任一请求的任一 message.content 包含 text。
+    bool ContainsText(const std::string& text) const
+    {
+        for (const core::ChatRequest& request : m_requests)
+        {
+            for (const core::ChatMessage& message : request.messages)
+            {
+                if (message.content.find(text) != std::string::npos)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+  private:
+    std::shared_ptr<core::ChatModel> m_inner;
+    std::vector<core::ChatRequest> m_requests;
+};
+
 constexpr runtime::RunStatus kRunStatuses[] = {
     runtime::RunStatus::Completed,      runtime::RunStatus::Cancelled, runtime::RunStatus::Failed,
     runtime::RunStatus::BudgetExceeded, runtime::RunStatus::Busy,
@@ -265,6 +326,11 @@ constexpr runtime::RunErrorCode kRunErrorCodes[] = {
 constexpr core::CallError kCallErrors[] = {
     core::CallError::None,         core::CallError::Cancelled,   core::CallError::DeadlineExceeded,
     core::CallError::ModelFailure, core::CallError::ToolFailure,
+};
+
+constexpr core::MemoryKind kMemoryKinds[] = {
+    core::MemoryKind::Fact,       core::MemoryKind::Event,        core::MemoryKind::Episode,
+    core::MemoryKind::Preference, core::MemoryKind::Relationship, core::MemoryKind::Goal,
 };
 
 std::string UsageText()
@@ -372,6 +438,19 @@ bool ParseRunErrorCodeName(const std::string& text, runtime::RunErrorCode& value
 bool ParseCallErrorName(const std::string& text, core::CallError& value)
 {
     for (const core::CallError candidate : kCallErrors)
+    {
+        if (text == core::ToString(candidate))
+        {
+            value = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ParseMemoryKindName(const std::string& text, core::MemoryKind& value)
+{
+    for (const core::MemoryKind candidate : kMemoryKinds)
     {
         if (text == core::ToString(candidate))
         {
@@ -512,6 +591,20 @@ bool ReadOptionalBool(const std::string& where, const nlohmann::json& object, co
     return value.get<bool>();
 }
 
+double ReadOptionalDouble(const std::string& where, const nlohmann::json& object, const char* key, double fallback)
+{
+    if (!object.contains(key) || object.at(key).is_null())
+    {
+        return fallback;
+    }
+    const nlohmann::json& value = object.at(key);
+    if (!value.is_number())
+    {
+        throw TaskFormatError(where + "field must be a number: " + key);
+    }
+    return value.get<double>();
+}
+
 std::vector<std::string> ReadStringArray(const std::string& where, const nlohmann::json& value)
 {
     if (!value.is_array())
@@ -552,6 +645,73 @@ std::vector<bool> ReadBoolArray(const std::string& where, const nlohmann::json& 
         ++index;
     }
     return result;
+}
+
+core::MemoryScope ParseMemoryScope(const std::string& where, const nlohmann::json& value)
+{
+    if (!value.is_object())
+    {
+        throw TaskFormatError(where + "must be an object");
+    }
+    core::MemoryScope scope;
+    scope.kind = ReadOptionalString(where, value, "kind", kDefaultMemoryScopeKind);
+    scope.id = ReadOptionalString(where, value, "id", kDefaultMemoryScopeId);
+    return scope;
+}
+
+core::MemoryRecord ParseMemoryRecord(const std::string& where, const nlohmann::json& value)
+{
+    if (!value.is_object())
+    {
+        throw TaskFormatError(where + "seed must be an object");
+    }
+
+    core::MemoryRecord record;
+    record.id = RequireString(where, value, "id");
+    const std::string kind_name = ReadOptionalString(where, value, "kind", core::ToString(core::MemoryKind::Fact));
+    if (!ParseMemoryKindName(kind_name, record.kind))
+    {
+        throw TaskFormatError(where + "unknown memory kind: " + kind_name);
+    }
+    record.text = RequireString(where, value, "text");
+
+    // 可选字段：标签、排序权重、作用域与时间
+    if (value.contains("tags"))
+    {
+        record.tags = ReadStringArray(where + "tags: ", value.at("tags"));
+    }
+    record.importance = ReadOptionalDouble(where, value, "importance", record.importance);
+    record.confidence = ReadOptionalDouble(where, value, "confidence", record.confidence);
+    if (value.contains("scope"))
+    {
+        record.scope = ParseMemoryScope(where + "scope: ", value.at("scope"));
+    }
+    else
+    {
+        record.scope.kind = kDefaultMemoryScopeKind;
+        record.scope.id = kDefaultMemoryScopeId;
+    }
+    record.payload_json = ReadOptionalString(where, value, "payload_json", "");
+    record.created_at = ReadOptionalInteger(where, value, "created_at", 0);
+    record.updated_at = ReadOptionalInteger(where, value, "updated_at", 0);
+    return record;
+}
+
+std::vector<core::MemoryRecord> ParseMemorySeeds(const std::string& where, const nlohmann::json& value)
+{
+    if (!value.is_array())
+    {
+        throw TaskFormatError(where + "must be an array");
+    }
+    std::vector<core::MemoryRecord> records;
+    records.reserve(value.size());
+    std::size_t index = 0;
+    for (const nlohmann::json& item : value)
+    {
+        records.push_back(ParseMemoryRecord(where + "[" + std::to_string(index) + "]: ", item));
+        ++index;
+    }
+    return records;
 }
 
 core::ChatUsage ParseUsage(const std::string& where, const nlohmann::json& value)
@@ -679,7 +839,7 @@ TaskExpectation ParseExpectation(const std::string& where, const nlohmann::json&
         throw TaskFormatError(where + "unknown error_code: " + error_code_name);
     }
 
-    // 可选约束：步数范围、工具轨迹与最终回答
+    // 可选约束：步数范围、工具轨迹、最终回答与召回注入
     expectation.min_steps = ReadOptionalInt(where, value, "min_steps");
     expectation.max_steps = ReadOptionalInt(where, value, "max_steps");
     if (HasInvertedStepRange(expectation.min_steps, expectation.max_steps))
@@ -698,6 +858,10 @@ TaskExpectation ParseExpectation(const std::string& where, const nlohmann::json&
     {
         expectation.content_contains = RequireString(where, value, "content_contains");
     }
+    if (value.contains("request_contains"))
+    {
+        expectation.request_contains = RequireString(where, value, "request_contains");
+    }
     return expectation;
 }
 
@@ -714,6 +878,10 @@ void ParseTask(const nlohmann::json& value, std::size_t index, EvalTask& task)
     task.kind = RequireString(where, value, "kind");
     task.description = ReadOptionalString(where, value, "description", "");
     task.input = RequireString(where, value, "input");
+    if (value.contains("follow_up_inputs"))
+    {
+        task.follow_up_inputs = ReadStringArray(where + "follow_up_inputs: ", value.at("follow_up_inputs"));
+    }
     task.system_prompt = ReadOptionalString(where, value, "system_prompt", kDefaultSystemPrompt);
 
     // 执行预算：max_steps 必须为正
@@ -725,7 +893,11 @@ void ParseTask(const nlohmann::json& value, std::size_t index, EvalTask& task)
     task.max_tool_calls = ReadOptionalSize(where, value, "max_tool_calls", kDefaultMaxToolCalls);
     task.max_tool_output_bytes = ReadOptionalSize(where, value, "max_tool_output_bytes", kDefaultMaxToolOutputBytes);
 
-    // mock 脚本（可选）与期望（必填）
+    // 长期记忆种子、mock 脚本（可选）与期望（必填）
+    if (value.contains("memory"))
+    {
+        task.memory = ParseMemorySeeds(where + "memory: ", value.at("memory"));
+    }
     if (value.contains("script"))
     {
         task.script = ParseScript(where + "script", value.at("script"));
@@ -977,6 +1149,12 @@ runtime::AgentProfile MakeTaskProfile(const EvalTask& task)
     profile.max_steps = task.max_steps;
     profile.max_tool_calls = task.max_tool_calls;
     profile.max_tool_output_bytes = task.max_tool_output_bytes;
+
+    // 长期记忆：非空种子时启用召回；recall_scopes 留空 = 不限制 scope
+    if (!task.memory.empty())
+    {
+        profile.memory_policy.enable_recall = true;
+    }
     return profile;
 }
 
@@ -988,6 +1166,27 @@ std::shared_ptr<TrackingChatModel> CreateTaskModel(const EvalTask& task, const s
         return std::make_shared<TrackingChatModel>(real_model);
     }
     return std::make_shared<TrackingChatModel>(std::make_shared<ScriptedChatModel>(task.script));
+}
+
+/// 把任务里的 seed 记忆写入 InMemoryMemoryStore，并挂到 dependencies；无种子时不启用。
+bool SeedMemory(const EvalTask& task, runtime::RunnerDependencies& dependencies, std::string& error)
+{
+    if (task.memory.empty())
+    {
+        return true;
+    }
+    auto store = std::make_shared<plugins::memory::InMemoryMemoryStore>();
+    for (const core::MemoryRecord& record : task.memory)
+    {
+        std::string remember_error;
+        if (!store->Remember(record, remember_error))
+        {
+            error = "cannot seed memory record \"" + record.id + "\": " + remember_error;
+            return false;
+        }
+    }
+    dependencies.memory = std::move(store);
+    return true;
 }
 
 RunAttempt ExecuteTask(const EvalTask& task, const std::filesystem::path& workspace,
@@ -1013,6 +1212,14 @@ RunAttempt ExecuteTask(const EvalTask& task, const std::filesystem::path& worksp
     dependencies.tool_scheduler = std::make_shared<runtime::InlineToolScheduler>();
     dependencies.systems = std::make_shared<core::SystemRegistry>();
 
+    // 长期记忆：先写入 seed 记录；失败则本次尝试不启动会话
+    std::string memory_error;
+    if (!SeedMemory(task, dependencies, memory_error))
+    {
+        attempt.setup_error = memory_error;
+        return attempt;
+    }
+
     try
     {
         auto runner = std::make_shared<runtime::AgentRunner>(std::move(dependencies));
@@ -1023,10 +1230,10 @@ RunAttempt ExecuteTask(const EvalTask& task, const std::filesystem::path& worksp
         descriptor.capabilities = {kReadFileToolName};
         runtime::AgentDependencies agent_dependencies;
         agent_dependencies.executor = runner;
-        runtime::Agent agent(descriptor, profile, agent_dependencies, "eval-" + task.id);
+        attempt.agent = std::make_shared<runtime::Agent>(descriptor, profile, agent_dependencies, "eval-" + task.id);
         runtime::RunOptions run_options;
         run_options.run_id = task.id;
-        attempt.result = agent.Send(task.input, run_options);
+        attempt.result = attempt.agent->Send(task.input, run_options);
     }
     catch (const std::exception& error)
     {
@@ -1082,7 +1289,7 @@ std::string EvaluateTaskExpectation(const TaskExpectation& expectation, const Ta
                            std::to_string(result.steps));
     }
 
-    // 工具轨迹与最终回答
+    // 工具轨迹、最终回答与召回注入
     if (expectation.tool_names && result.tools != *expectation.tool_names)
     {
         failures.push_back("tools expected " + FormatToolNames(*expectation.tool_names) + ", got " +
@@ -1097,7 +1304,30 @@ std::string EvaluateTaskExpectation(const TaskExpectation& expectation, const Ta
     {
         failures.push_back("content does not contain: " + *expectation.content_contains);
     }
+    if (expectation.request_contains && !result.request_contains)
+    {
+        failures.push_back("no model request contains: " + *expectation.request_contains);
+    }
     return JoinStrings(failures, "; ");
+}
+
+/// 首轮成功后在同一个 Agent 上继续 follow_up_inputs；任一失败即停止，保留最后一轮结果。
+void RunFollowUpTurns(const EvalTask& task, RunAttempt& attempt)
+{
+    if (!attempt.agent || !attempt.result.Ok())
+    {
+        return;
+    }
+    for (std::size_t index = 0; index < task.follow_up_inputs.size(); ++index)
+    {
+        runtime::RunOptions options;
+        options.run_id = task.id + "-turn-" + std::to_string(index + 2);
+        attempt.result = attempt.agent->Send(task.follow_up_inputs[index], options);
+        if (!attempt.result.Ok())
+        {
+            break;
+        }
+    }
 }
 
 TaskResult RunTask(const EvalTask& task, const std::filesystem::path& workspace, const std::string& mode,
@@ -1109,12 +1339,22 @@ TaskResult RunTask(const EvalTask& task, const std::filesystem::path& workspace,
     result.description = task.description;
 
     const auto tracker = CreateTaskModel(task, mode, real_model);
+    const auto recorder = std::make_shared<RecordingChatModel>(tracker);
     const auto started = std::chrono::steady_clock::now();
-    const RunAttempt attempt = ExecuteTask(task, workspace, tracker);
+    RunAttempt attempt = ExecuteTask(task, workspace, recorder);
+    if (attempt.setup_error.empty())
+    {
+        RunFollowUpTurns(task, attempt);
+    }
+
     const auto finished = std::chrono::steady_clock::now();
     result.latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(finished - started).count();
     result.model_calls = tracker->Calls();
     result.tokens = tracker->Usage().total_tokens;
+    if (task.expect.request_contains)
+    {
+        result.request_contains = recorder->ContainsText(*task.expect.request_contains);
+    }
 
     if (!attempt.setup_error.empty())
     {
@@ -1146,7 +1386,8 @@ void PrintTaskLine(const TaskResult& result, bool verbose)
     }
     std::cout << "       status=" << result.status << " error_code=" << result.error_code
               << " tool_attempts=" << result.tool_attempts << " model_calls=" << result.model_calls
-              << " tool_results_ok=" << FormatToolResults(result.tool_results_ok);
+              << " tool_results_ok=" << FormatToolResults(result.tool_results_ok)
+              << " request_contains=" << (result.request_contains ? "true" : "false");
     if (!result.run_error.empty())
     {
         std::cout << " run_error=" << result.run_error;
@@ -1198,6 +1439,7 @@ nlohmann::json BuildReportJson(const CliOptions& options, const std::filesystem:
         item["tool_results_ok"] = std::move(tool_results);
         item["model_calls"] = result.model_calls;
         item["tokens"] = result.tokens;
+        item["request_contains"] = result.request_contains;
         item["latency_ms"] = result.latency_ms;
         task_results.push_back(std::move(item));
     }

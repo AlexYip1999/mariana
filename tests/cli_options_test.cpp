@@ -27,6 +27,23 @@ TEST_CASE("requires config value")
     CHECK(empty.error.find("non-empty") != std::string::npos);
 }
 
+TEST_CASE("parses memory path option")
+{
+    const agent::hosts::cli::CliParseResult result =
+        agent::hosts::cli::ParseCliOptions({"--memory", "data/memory.jsonl"});
+
+    CHECK(result.ok);
+    CHECK(result.options.memory_path == "data/memory.jsonl");
+
+    const agent::hosts::cli::CliParseResult missing = agent::hosts::cli::ParseCliOptions({"--memory"});
+    CHECK_FALSE(missing.ok);
+    CHECK(missing.error.find("requires a value") != std::string::npos);
+
+    const agent::hosts::cli::CliParseResult empty = agent::hosts::cli::ParseCliOptions({"--memory", ""});
+    CHECK_FALSE(empty.ok);
+    CHECK(empty.error.find("non-empty") != std::string::npos);
+}
+
 TEST_CASE("rejects old startup options")
 {
     const std::vector<std::string> options = {"--interactive", "--workspace",   "--no-tools", "--stats",

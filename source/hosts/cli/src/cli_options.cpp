@@ -54,10 +54,19 @@ CliParseResult ParseCliOptions(const std::vector<std::string>& args)
             }
             continue;
         }
+        if (arg == "--memory")
+        {
+            if (!RequireValue(args, index, "--memory", result.options.memory_path, result.error))
+            {
+                result.ok = false;
+                return result;
+            }
+            continue;
+        }
 
         result.ok = false;
-        result.error =
-            "unknown argument: " + arg + "\n启动只接受 --help/--version/--config；其他选项在交互模式用命令设置";
+        result.error = "unknown argument: " + arg +
+                       "\n启动只接受 --help/--version/--config/--memory；其他选项在交互模式用命令设置";
         return result;
     }
 

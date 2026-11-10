@@ -272,6 +272,17 @@ ConfigLoadResult ParseCliConfig(const std::string& json_text, const CliConfig& b
                 result.config.tool_names.push_back(item.get<std::string>());
             }
         }
+
+        if (parsed.contains("memory_path"))
+        {
+            if (!parsed["memory_path"].is_string())
+            {
+                result.ok = false;
+                result.error = "memory_path must be a string";
+                return result;
+            }
+            result.config.memory_path = parsed["memory_path"].get<std::string>();
+        }
     }
     catch (const nlohmann::json::exception& error)
     {
@@ -396,6 +407,7 @@ ConfigInitResult WriteDefaultCliConfigFile(const std::string& path)
     config_json["temperature"] = defaults.temperature;
     config_json["max_context_chars"] = defaults.max_context_chars;
     config_json["tool_names"] = defaults.tool_names;
+    config_json["memory_path"] = defaults.memory_path;
 
     std::ofstream file(path);
     if (!file.is_open())

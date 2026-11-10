@@ -216,6 +216,19 @@ TEST_CASE("parses tool names")
     CHECK(result.config.tool_names[1] == "search_web");
 }
 
+TEST_CASE("parses memory path from config")
+{
+    const agent::hosts::cli::ConfigLoadResult result =
+        agent::hosts::cli::ParseCliConfig(R"({"memory_path":"data/memory.jsonl"})");
+
+    CHECK(result.ok);
+    CHECK(result.config.memory_path == "data/memory.jsonl");
+
+    const agent::hosts::cli::ConfigLoadResult rejected = agent::hosts::cli::ParseCliConfig(R"({"memory_path":42})");
+    CHECK_FALSE(rejected.ok);
+    CHECK(rejected.error.find("memory_path") != std::string::npos);
+}
+
 TEST_CASE("rejects insecure endpoint")
 {
     const agent::hosts::cli::ConfigLoadResult result =

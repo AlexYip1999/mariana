@@ -6,6 +6,7 @@
 #include <string>
 
 #include "agent/core/chat_model.h"
+#include "agent/core/memory.h"
 #include "agent/core/system_registry.h"
 #include "agent/hosts/cli/cli_command.h"
 #include "agent/hosts/cli/cli_config.h"
@@ -58,6 +59,9 @@ struct HostServices
     std::shared_ptr<core::SystemRegistry> systems;
     std::shared_ptr<plugins::metrics::MetricsCollector> metrics;
     std::shared_ptr<plugins::traces::FileTracer> tracer;
+
+    // 长期记忆（空 = 未启用；通过 --memory / memory_path 打开 JSONL 存储）
+    std::shared_ptr<core::MemoryStore> memory;
 
     // CLI 上下文与工具目录
     std::shared_ptr<CliContext> context;

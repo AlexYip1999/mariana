@@ -13,6 +13,8 @@ struct CliOptions
     bool help = false;
     bool version = false;
     std::string config_path;
+    // 长期记忆 JSONL 路径；空 = 用配置里的 memory_path（也为空则不启用）
+    std::string memory_path;
 };
 
 struct CliParseResult

@@ -578,8 +578,8 @@ PR5  ToolDescriptor + ValidateComposition
 > fail-closed、预算裁剪）；`ToolPolicy::AllowsSideEffects` 副作用授权已接入组合校验；Memory Phase 1 已交付
 > （`MemoryStore`/`Summarizer` 契约 + InMemory/Noop + 规则摘要 + `<memory>` 召回注入，见
 > [`memory.md`](memory.md)）；Phase 2 已接入 Session 会话压缩（阈值触发 → 摘要 System 消息替换旧轮次）与
-> `ModelSummarizer`；剩余 CLI 持久化/eval 长期记忆任务、Validator。ContextPipeline（多 Provider 顺序注入）
-> 与强类型上下文留待后续。
+> `ModelSummarizer`，CLI 已提供 `--memory` JSONL 持久化、eval 已提供长期记忆任务；剩余 Validator 与 P1 硬化。
+> ContextPipeline（多 Provider 顺序注入）与强类型上下文留待后续。
 
 ### F2：B1 UE Editor
 

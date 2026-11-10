@@ -9,7 +9,7 @@
 |---|---|---|
 | 短期 | `Conversation` + `ContextPolicy` | 已有 |
 | 中期 | `Summarizer`（压缩旧轮次） | 接口 + 规则/模型实现已提供；Session 压缩已接入（Phase 2） |
-| 长期 | `MemoryStore`（结构化记忆 + 检索） | 接口 + InMemory/Noop 实现已提供（持久化由 Host） |
+| 长期 | `MemoryStore`（结构化记忆 + 检索） | 接口 + InMemory/Noop/Jsonl 实现已提供（SQLite/UE SaveGame 由 Host） |
 
 ## 2. 契约
 
@@ -28,7 +28,7 @@
 `MemoryScope{kind, id}` 的 `kind` 约定：`session` / `agent` / `user` / `world`。
 
 - UE NPC：`agent:<npc_id>`（自己记得的事）、`user:<player_id>`（玩家档案）、`world:<world_id>`（共享记忆）；
-- CLI：`user:<name>` 或 `session:<id>`；
+- CLI：`user:<name>` 或 `session:<id>`；CLI 的 `--memory` 默认使用共享作用域 `cli:default`；
 - 召回时 `MemoryPolicy.recall_scopes` 通常填当前 agent + world（共享），空表示不限制。
 
 ## 3. 召回注入流程（Phase 1）
@@ -72,16 +72,41 @@
 - 每次压缩会移除上一条摘要并生成新摘要（不累积重复摘要），`kSummaryMessagePrefix` 用于识别旧摘要；
 - 压缩只改 `Conversation`，不改变 TurnRecord/工具执行记录。
 
-## 5. 内置实现
+## 5. CLI 持久化（JSONL）
+
+`agent::plugins::memory::JsonlMemoryStore` 是随包提供的追加式 JSONL 实现，供 CLI（以及需要简单文件持久化的 Host）使用：
+
+- 打开：`JsonlMemoryStore::Open(path, error)`；父目录不存在时自动创建，文件不存在时创建，然后逐行重放；
+- 追加式操作日志（每行一个 JSON）：`{"op":"remember","record":{...}}` / `{"op":"forget","id":"..."}` /
+  `{"op":"clear_scope","scope":{...}}`；
+- 写入失败返回 `false` 并写 `error`，内存状态不变；重放遇到非法行时 `Open` 失败并报告行号；
+- `Records()` / `Size()` / `Path()` 供 Host 展示；召回语义与 `InMemoryMemoryStore` 完全一致。
+
+CLI 接入：
+
+```text
+agent-cli --memory .\memory.jsonl       # 启动参数；也可在配置里写 "memory_path"
+> /memory                               # 路径 + 记录数
+> /memory list                          # 列出 cli:default 作用域的记忆
+> /memory add 张三的电话是 13800001111   # 写入一条 Fact（自动生成 id）
+> /memory clear                         # 清空 cli:default 作用域
+```
+
+- 开启后 `AgentFactory` 打开 `enable_recall`，召回作用域固定为 `cli:default`，因此新会话会加载同一 JSONL 并自动召回；
+- 打开失败（路径不可用/文件损坏）会拒绝启动，避免静默丢记忆；单次写入失败由 `/memory add` 输出错误；
+- JSONL 是追加日志，长期使用可按 Host 策略定期重写压缩（当前未内置）。
+
+## 6. 内置实现
 
 - `agent::plugins::memory::NoopMemoryStore`：空实现（写入静默成功、召回为空）。
 - `agent::plugins::memory::InMemoryMemoryStore`：进程内确定性实现，用于测试/CLI 演示/UE 早期接入。
   召回规则：文本或 tag 命中优先，其次 `importance`、`updated_at`、`id`；支持 tags（AND）、kinds、scopes 过滤与
   `limit` / `max_chars` 预算。中文没有分词：query 包含某个 tag 也算命中，Host 应写入有意义的 tags。
+- `agent::plugins::memory::JsonlMemoryStore`：JSONL 追加日志实现，重启后重放恢复（见上节）。
 - `agent::plugins::memory::RuleBasedSummarizer`：保留最近 N 条非空非 tool 消息的规则摘要，确定性、零模型调用。
 - `agent::plugins::memory::ModelSummarizer`：用 `ChatModel` 生成摘要，可配 fallback。
 
-## 6. Host 接入示例（伪代码）
+## 7. Host 接入示例（伪代码）
 
 ```cpp
 auto store = std::make_shared<MySqliteMemoryStore>("/path/to/agent-memory.db");
@@ -112,17 +137,22 @@ record.importance = 0.8;
 store->Remember(record, error);
 ```
 
-## 7. 测试
+## 8. 测试
 
 `tests/memory_test.cpp`：存取/更新、scope/tag/文本召回、预算截断、forget/clear、Noop 行为、
 规则摘要（保留最近、排除 tool、预算）、Runner 注入位置与预算、关闭记忆时零注入、召回异常降级。
 
+`tests/jsonl_memory_store_test.cpp`：JSONL 打开/建目录、重开往返、更新、forget、clear_scope、
+排序/预算、非法行失败。
+
 `tests/session_memory_test.cpp`：Session 压缩（保留最近 K 轮、摘要消息替换旧轮次）、压缩失败/关闭时保留历史、
 `ModelSummarizer` 的请求参数（temperature 0 / max_tokens）、截断与 fallback。
 
-## 8. 后续（Phase 2 剩余 / F4）
+`eval/tasks.json` 的 `long_term_memory_injection` / `long_term_memory_across_turns`：
+seed 记忆后验证召回注入到模型请求（`request_contains`）与跨轮回答。
 
-- CLI 持久化：JSONL/SQLite `MemoryStore` + `--memory` 开关（跨 CLI 会话演示）；
-- eval 增加"长期记忆"任务（跨轮/跨会话记忆问答），对应米哈游 JD 的"长期记忆效果"评测维度；
+## 9. 后续（F4）
+
+- UE 持久化：SQLite / `USaveGame` 版 `MemoryStore`；
 - `memory_search`/`memory_write` 可选工具、异步/后台压缩、`scope=world` 共享与传播；
-- 记忆写入的隐私/保留/删除策略，向量/embedding 检索。
+- JSONL 日志的定期重写/压缩、记忆写入的隐私/保留/删除策略，向量/embedding 检索。

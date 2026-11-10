@@ -5,6 +5,7 @@
 #include <string>
 
 #include "agent/core/chat_model.h"
+#include "agent/core/memory.h"
 #include "agent/core/system_registry.h"
 #include "agent/hosts/cli/cli_config.h"
 #include "agent/runtime/agent.h"
@@ -22,7 +23,8 @@ class AgentFactory
 {
   public:
     AgentFactory(CliConfig config, std::shared_ptr<core::ChatModel> model,
-                 std::shared_ptr<core::SystemRegistry> systems, std::shared_ptr<ToolCatalog> tool_catalog);
+                 std::shared_ptr<core::SystemRegistry> systems, std::shared_ptr<ToolCatalog> tool_catalog,
+                 std::shared_ptr<core::MemoryStore> memory = nullptr);
 
     std::shared_ptr<runtime::AgentRunner> CreateExecutor(const std::filesystem::path& workspace) const;
 
@@ -40,6 +42,8 @@ class AgentFactory
     std::shared_ptr<core::ChatModel> m_model;
     std::shared_ptr<core::SystemRegistry> m_systems;
     std::shared_ptr<ToolCatalog> m_tool_catalog;
+    // 长期记忆；非空时 MakeProfile 打开 enable_recall，Runner 获得同一 store
+    std::shared_ptr<core::MemoryStore> m_memory;
 };
 
 } // namespace agent::hosts::cli

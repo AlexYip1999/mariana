@@ -32,10 +32,11 @@ void PrintUsage(std::ostream& out, const CommandRegistry& registry)
         << "启动参数：\n"
         << "  agent-cli --help\n"
         << "  agent-cli --version\n"
-        << "  agent-cli [--config <path>]\n"
+        << "  agent-cli [--config <path>] [--memory <path>]\n"
         << "\n"
         << "其他选项在交互模式用命令设置。trace 插件默认开启。\n"
         << "API key 从环境变量读取（默认 DEEPSEEK_API_KEY）。\n"
+        << "--memory 指定 JSONL 长期记忆文件（跨会话），交互模式用 /memory 查看或写入。\n"
         << "\n"
         << registry.HelpText();
 }
@@ -141,10 +142,15 @@ int RunHost(const std::vector<std::string>& args, const HostEnvironment& environ
     }
 
     int config_exit = 0;
-    const CliConfig config = LoadConfig(options, environment.executable_path, err, config_exit);
+    CliConfig config = LoadConfig(options, environment.executable_path, err, config_exit);
     if (config_exit != 0)
     {
         return config_exit;
+    }
+    // --memory 覆盖配置文件里的 memory_path（命令行优先）。
+    if (!options.memory_path.empty())
+    {
+        config.memory_path = options.memory_path;
     }
 
     const std::string api_key = ResolveApiKey(config, environment.get_env);
@@ -192,7 +198,8 @@ int RunHost(const std::vector<std::string>& args, const HostEnvironment& environ
         return 2;
     }
 
-    auto factory = std::make_shared<AgentFactory>(config, services->model, services->systems, tool_catalog);
+    auto factory =
+        std::make_shared<AgentFactory>(config, services->model, services->systems, tool_catalog, services->memory);
     services->context->create_executor = [factory](const std::filesystem::path& workspace_path)
     {
         return factory->CreateExecutor(workspace_path);

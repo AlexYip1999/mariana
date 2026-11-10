@@ -22,6 +22,7 @@ target_link_libraries(agent_cli_lib
         agent_transport
         agent_runtime
     PRIVATE
+        agent_memory
         agent_metrics
         agent_tools
         agent_traces

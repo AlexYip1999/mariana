@@ -521,6 +521,92 @@
           true
         ]
       }
+    },
+    {
+      "id": "long_term_memory_injection",
+      "kind": "memory",
+      "description": "A seeded phone-number Fact is recalled and injected into the model request before the final answer.",
+      "input": "What is the user's phone number?",
+      "max_steps": 1,
+      "memory": [
+        {
+          "id": "mem-phone",
+          "kind": "Fact",
+          "text": "用户的电话是 13800001111",
+          "tags": [
+            "phone"
+          ],
+          "importance": 0.9
+        }
+      ],
+      "script": [
+        {
+          "content": "The user's phone number is 13800001111.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 60,
+            "completion_tokens": 10,
+            "total_tokens": 70
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 1,
+        "max_steps": 1,
+        "content_contains": "13800001111",
+        "request_contains": "13800001111"
+      }
+    },
+    {
+      "id": "long_term_memory_across_turns",
+      "kind": "memory_followup",
+      "description": "A seeded color Preference is recalled on the second turn; the final answer and the request both carry the recalled color.",
+      "input": "Hello! Let's have a short chat.",
+      "follow_up_inputs": [
+        "Which color does the user like best?"
+      ],
+      "max_steps": 1,
+      "memory": [
+        {
+          "id": "mem-color",
+          "kind": "Preference",
+          "text": "用户最喜欢的颜色是青绿色",
+          "tags": [
+            "color"
+          ],
+          "importance": 0.8
+        }
+      ],
+      "script": [
+        {
+          "content": "Sure, nice to chat with you.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 50,
+            "completion_tokens": 8,
+            "total_tokens": 58
+          }
+        },
+        {
+          "content": "The user's favorite color is 青绿色.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 80,
+            "completion_tokens": 12,
+            "total_tokens": 92
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 1,
+        "max_steps": 1,
+        "content_contains": "青绿色",
+        "request_contains": "青绿色"
+      }
     }
   ]
 }

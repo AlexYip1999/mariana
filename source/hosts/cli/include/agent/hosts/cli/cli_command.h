@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "agent/core/memory.h"
 #include "agent/core/stats_view.h"
 #include "agent/core/system_registry.h"
 #include "agent/hosts/cli/cli_config.h"
@@ -44,6 +45,10 @@ struct CliContext
 
     // 工具目录，/tools 命令使用
     std::shared_ptr<const ToolCatalog> tool_catalog;
+
+    // 长期记忆（空 = 未启用；/memory 命令读写）
+    std::shared_ptr<core::MemoryStore> memory;
+    std::string memory_path;
 
     // 观测与展示
     std::shared_ptr<core::StatsView> stats;

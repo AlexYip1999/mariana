@@ -8,6 +8,8 @@
 
 // clang-format off
 #if defined(_WIN32)
+// NOMINMAX: 避免 windows.h 的 min/max 宏与 agent 头文件里的 std::min/std::max 冲突。
+#define NOMINMAX
 #include <windows.h>
 #include <shellapi.h>
 #endif

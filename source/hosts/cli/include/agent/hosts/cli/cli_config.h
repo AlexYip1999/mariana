@@ -5,10 +5,18 @@
 #include <string>
 #include <vector>
 
+#include "agent/core/memory.h"
+
 namespace agent::hosts::cli
 {
 
 using EnvironmentLookup = std::function<std::string(const std::string&)>;
+
+/// CLI 长期记忆的固定作用域（跨 session 共享）；由 --memory 开关启用。
+inline core::MemoryScope CliMemoryScope()
+{
+    return core::MemoryScope{"cli", "default"};
+}
 
 struct CliConfig
 {
@@ -36,6 +44,9 @@ struct CliConfig
 
     // 工具
     std::vector<std::string> tool_names = {"read_file"};
+
+    // 长期记忆：JSONL 文件路径；空 = 关闭（可用 --memory 覆盖）
+    std::string memory_path;
 };
 
 struct ConfigLoadResult

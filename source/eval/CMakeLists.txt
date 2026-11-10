@@ -9,6 +9,7 @@ target_link_libraries(agent-eval
         agent_runtime
         agent_tools
         agent_transport
+        agent_memory
         agent_third_party
 )
 
