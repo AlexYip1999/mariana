@@ -2,7 +2,7 @@
 
 `eval/` 提供 agent-core 的可复现离线评测：
 
-- `eval/tasks.json`：12 条固定任务，覆盖正常 ReAct 循环（单读 / 顺序双读 / 多步）、工具错误恢复（缺文件 / 未知工具）、fatal 协议错误（非法工具名 / 空回复 / `finish_reason=length`）、预算终止（`ModelCallLimit` / `ToolCallLimit`）与长期记忆召回（单轮注入 / 跨轮 `follow_up_inputs`）。
+- `eval/tasks.json`：14 条固定任务，覆盖正常 ReAct 循环（单读 / 顺序双读 / 多步）、工具错误恢复（缺文件 / 未知工具）、fatal 协议错误（非法工具名 / 空回复 / `finish_reason=length`）、预算终止（`ModelCallLimit` / `ToolCallLimit`）、长期记忆召回（单轮注入 / 跨轮 `follow_up_inputs`）与只读工具（`list_dir` / `search_text`）。
 - `source/eval/`：`agent-eval` 可执行文件（单文件实现）。逐条执行任务、按 `expect` 判定，输出每任务一行结果与汇总，可选写 JSON 报告。
 - **mock 模式**使用脚本化模型（`ScriptedChatModel`），零网络、无外部依赖、结果确定（除 `latency_ms` 外完全可复现）。记忆任务另用 `RecordingChatModel` 装饰器记录每次 `ChatRequest`，供 `request_contains` 校验召回是否真的注入了 prompt。
 
@@ -50,14 +50,16 @@ real 模式使用 WinHTTP + `OpenAiChatModel`（默认 endpoint `https://api.dee
 ## 输出示例
 
 ```text
-agent-eval: mode=mock tasks=12 workspace=E:\AI\uniagent\agent-core\eval\workspace
+agent-eval: mode=mock tasks=14 workspace=E:\AI\uniagent\agent-core\eval\workspace
 [PASS] single_read_notes kind=single_read steps=2 tools=[read_file] latency_ms=0 tokens=115
 [PASS] sequential_double_read kind=sequential_read steps=3 tools=[read_file, read_file] latency_ms=0 tokens=180
 ...
 [PASS] budget_tool_call_limit kind=tool_call_limit steps=1 tools=[read_file] latency_ms=0 tokens=55
 [PASS] long_term_memory_injection kind=memory steps=1 tools=[] latency_ms=0 tokens=70
 [PASS] long_term_memory_across_turns kind=memory_followup steps=1 tools=[] latency_ms=0 tokens=150
-summary: passed=12 total=12 pass_rate=1.000 threshold=0.700
+[PASS] list_dir_orientation kind=list_dir steps=3 tools=[list_dir, read_file] latency_ms=0 tokens=217
+[PASS] search_text_marker kind=search_text steps=2 tools=[search_text] latency_ms=0 tokens=138
+summary: passed=14 total=14 pass_rate=1.000 threshold=0.700
 ```
 
 `[PASS]` / `[FAIL]` 行固定包含：ID、`kind`、`steps`、`tools`、`latency_ms`、`tokens`；失败时追加 `failure=<原因>`（多条断言不满足时以 `; ` 连接）。多轮任务的 `latency_ms` / `tokens` / `model_calls` 覆盖所有轮次，`steps` / `tools` / `tool_results_ok` 反映最后一轮。
@@ -133,7 +135,7 @@ summary: passed=12 total=12 pass_rate=1.000 threshold=0.700
 - `workspace/guide.txt`：含 `GUIDE_MARKER_1` 与 `NEXT_FILE=notes.md`
 - `workspace/missing.txt` **故意不存在**，用于缺失文件恢复用例
 
-## 12 条任务覆盖矩阵
+## 14 条任务覆盖矩阵
 
 | # | id | kind | 覆盖点 |
 |---|---|---|---|
@@ -149,8 +151,10 @@ summary: passed=12 total=12 pass_rate=1.000 threshold=0.700
 | 10 | `budget_tool_call_limit` | tool_call_limit | `max_tool_calls` 超限 → `BudgetExceeded`/`ToolCallLimit` |
 | 11 | `long_term_memory_injection` | memory | seed Fact 被召回并注入 prompt，最终回答含电话号码（`request_contains` + `content_contains`） |
 | 12 | `long_term_memory_across_turns` | memory_followup | 同一 Agent 两轮：第二轮 follow-up 命中 Preference 召回，跨轮注入 `青绿色`（expectation 针对最后一轮） |
+| 13 | `list_dir_orientation` | list_dir | 先 `list_dir` 浏览工作区再 `read_file`，两步工具链 |
+| 14 | `search_text_marker` | search_text | `search_text` 在 fixture 中按内容检索 `FAQ_MARKER_7` |
 
-mock 模式下 12 条全部通过（`passed=12 total=12`）。
+mock 模式下 14 条全部通过（`passed=14 total=14`）。
 
 ## 长期记忆评测
 

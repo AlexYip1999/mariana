@@ -171,4 +171,4 @@ UI EventQueue     Notifier 只投递，GT 消费
 - Memory：Phase 1/2 已提供 `MemoryStore`/`Summarizer` 契约、`Noop`/`InMemory`/`Jsonl` 实现、
   `<memory>` 召回注入、会话压缩与 `RuleBasedSummarizer`/`ModelSummarizer`（见 [memory.md](memory.md)）；
   CLI 已用 `--memory` 提供 JSONL 持久化，eval 已提供长期记忆任务；UE 侧 SQLite/`USaveGame` 持久化待后续阶段。
-- Eval harness：`agent-eval` mock 模式已提供（12/12 离线可复现），real 模式需 `DEEPSEEK_API_KEY`。
+- Eval harness：`agent-eval` mock 模式已提供（14/14 离线可复现），real 模式需 `DEEPSEEK_API_KEY`。

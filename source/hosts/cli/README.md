@@ -100,21 +100,26 @@ trace 默认开启，目录为 `traces/`。
 
 ## 工具
 
-默认注册一个只读工具：
+默认注册三个只读工具：
 
 ```text
 read_file({"path":"relative/path.txt"})
+list_dir({"path":"relative/dir"})
+search_text({"query":"substring","path":"relative/file-or-dir","max_results":50})
 ```
 
 规则：
 
 - workspace 默认是当前工作目录，可用 `/workspace <path>` 覆盖；
-- `/tools off` 清空当前 Profile 的允许列表；`/tools on` 启用 ToolCatalog 中的全部工具（当前为 `read_file`）；
+- `/tools off` 清空当前 Profile 的允许列表；`/tools on` 启用 ToolCatalog 中的全部工具
+  （`read_file` / `list_dir` / `search_text`）；
 - 配置 `tool_names: []` 启动时禁用工具；`/workspace` 保留当前工具开关，只有显式 `/tools on` 才重新启用；
-- 只允许 workspace 内的相对路径；
+- 三个工具都只允许 workspace 内的相对路径；
 - 拒绝绝对路径、`..` 越界、symlink/junction 逃逸、目录和超过 256 KiB 的文件；
 - 拒绝敏感文件：`.env*`、`config.local.json`、`.git`、`.docker`、`.kube`、私钥/证书文件等；
-- 只接受 UTF-8 文本，二进制/GBK/UTF-16 返回错误；
+- `read_file` 只接受 UTF-8 文本，二进制/GBK/UTF-16 返回错误；
+- `list_dir` 按文件名排序，跳过 symlink 与敏感项，默认最多 200 条，超出追加 `... (<N> more entries)`；
+- `search_text` 大小写敏感，跳过二进制（含 NUL）与超过 256 KiB 的文件，默认最多 50 条命中、500 个文件；
 - 模型通过 `tool_calls` 调用，结果以 `role=tool` 回填后继续推理；
 - `max_steps` 默认 8，只计模型 Step；
 - 单轮工具最多尝试 64 次、正文输出默认 32 KiB，可用 `max_tool_calls` / `max_tool_output_bytes` 配置；

@@ -18,6 +18,7 @@
 #include "agent/runtime/tool_output_policy.h"
 #include "agent/runtime/tool_policy.h"
 #include "agent/runtime/tool_registry.h"
+#include "agent/runtime/validator.h"
 
 namespace agent::runtime
 {
@@ -38,13 +39,15 @@ struct RunnerDependencies
     std::shared_ptr<ToolScheduler> tool_scheduler;
     std::shared_ptr<core::SystemRegistry> systems;
 
-    // 可选注入：宿主上下文 / 长期记忆召回 / 会话压缩
+    // 可选注入：宿主上下文 / 长期记忆召回 / 会话压缩 / 输出契约校验
     /// 可选：每轮模型调用前构建宿主上下文（世界快照/检索）；为空表示不注入。
     std::shared_ptr<core::ContextProvider> context_provider;
     /// 可选：长期记忆召回（由 AgentProfile::memory_policy 控制是否启用）；为空表示不召回。
     std::shared_ptr<core::MemoryStore> memory;
     /// 可选：会话压缩（历史超阈值时由 Session 调用）；为空表示不压缩。
     std::shared_ptr<core::Summarizer> summarizer;
+    /// 可选：最终回答写入对话前校验输出契约；为空表示不校验。
+    std::shared_ptr<Validator> validator;
 };
 
 /// 默认 ReAct 执行器：模型请求 → tool_calls → 执行工具 → 继续，直到最终回答或 max_steps。

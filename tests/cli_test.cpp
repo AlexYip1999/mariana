@@ -18,7 +18,9 @@
 #include "agent/hosts/cli/run_loop.h"
 #include "agent/model/openai_chat_model.h"
 #include "agent/plugins/metrics/metrics_collector.h"
+#include "agent/plugins/tools/list_dir_tool.h"
 #include "agent/plugins/tools/read_file_tool.h"
+#include "agent/plugins/tools/search_text_tool.h"
 #include "agent/runtime/agent_runner.h"
 #include "agent/runtime/tool_registry.h"
 #include "support/fake_http_transport.h"
@@ -55,6 +57,8 @@ agent::hosts::cli::CliConfig MakeCliConfig()
     config.model = "deepseek-flash";
     config.system_prompt = "be brief";
     config.max_tokens = 64;
+    // 该 fixture 的 registry 只注册 read_file，允许列表保持一致。
+    config.tool_names = {"read_file"};
     return config;
 }
 
@@ -118,8 +122,10 @@ class TestExecutor
         {
             auto tools = std::make_shared<agent::runtime::ToolRegistry>();
             std::string error;
-            tools->Register(std::make_shared<agent::plugins::tools::ReadFileTool>(std::filesystem::current_path()),
-                            error);
+            const std::filesystem::path workspace = std::filesystem::current_path();
+            tools->Register(std::make_shared<agent::plugins::tools::ReadFileTool>(workspace), error);
+            tools->Register(std::make_shared<agent::plugins::tools::ListDirTool>(workspace), error);
+            tools->Register(std::make_shared<agent::plugins::tools::SearchTextTool>(workspace), error);
             services.Set<agent::runtime::ToolRegistry>(tools);
         }
         return agent::tests::MakeRunnerDependencies(model, services);
@@ -202,7 +208,7 @@ TEST_CASE("parses cli config overrides")
     CHECK(result.config.provider == "deepseek");
     CHECK(result.config.cost_currency == "CNY");
     CHECK(result.config.max_context_chars == 120000);
-    CHECK(result.config.tool_names == std::vector<std::string>{"read_file"});
+    CHECK(result.config.tool_names == std::vector<std::string>{"read_file", "list_dir", "search_text"});
 }
 
 TEST_CASE("parses tool names")

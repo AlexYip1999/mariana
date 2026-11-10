@@ -5,16 +5,17 @@
 仓库：[AlexYip1999/mariana](https://github.com/AlexYip1999/mariana)
 本地目录为 `agent-core`；代码命名空间暂用 `agent::`，后续统一改名。
 
-**当前状态：A2.5（F0 运行时收口）已完成，A3（F1）进行中** —— Windows 已接入临时 WinHTTP 传输；已实现 `Agent`/`AgentSession`/`AgentRunner`、scoped `ServiceRegistry`、ReAct 工具循环、`read_file`、取消/预算/并发硬化、Turn 事务、结构化 TurnEvent、ToolDescriptor、组合校验、CallError/RunErrorCode 分层、HostServices/AgentFactory/RunLoop、metrics、trace、CLI `CommandRegistry` 交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI + 参考 Host Adapter。
+**当前状态：A2.5（F0 运行时收口）已完成，A3（F1）进行中** —— Windows 已接入临时 WinHTTP 传输；已实现 `Agent`/`AgentSession`/`AgentRunner`、scoped `ServiceRegistry`、ReAct 工具循环、只读工具 `read_file`/`list_dir`/`search_text`、输出契约校验 `Validator`（`JsonAnswerValidator`）、取消/预算/并发硬化、Turn 事务、结构化 TurnEvent、ToolDescriptor、组合校验、CallError/RunErrorCode 分层、HostServices/AgentFactory/RunLoop、metrics、trace、CLI `CommandRegistry` 交互。CTest 覆盖 core + runtime + tools + metrics + model + transport + CLI + 参考 Host Adapter。
 
 F1 进展：`ContextProvider` 已接入 Runner（`RunnerDependencies.context_provider`，每轮注入上下文、失败 fail-closed）；
 `ToolDescriptor` 副作用授权已接入组合校验（`ToolPolicy::AllowsSideEffects`）；新增静态库安装规则、版本/ABI 校验
 与 Host 接入文档（见 [构建与交付](docs/build-delivery.md)、[UE 接入指南](docs/hosts-unreal.md)、
 [ContextProvider 契约](docs/context-provider.md)、[API 参考](docs/api.md)）；新增离线评测 `agent-eval`
-（mock 模式 12/12、离线可复现，见 [eval/README](eval/README.md)）与取消/超时/预算 DoD 回归测试；
+（mock 模式 14/14、离线可复现，见 [eval/README](eval/README.md)）与取消/超时/预算 DoD 回归测试；
 Memory Phase 2 已收尾：`MemoryStore`/`Summarizer` 通用契约、Noop/InMemory/Jsonl 实现、每轮 `<memory>` 召回注入、
 会话压缩（Session 超阈值 → 摘要替换旧轮次）、`RuleBasedSummarizer`/`ModelSummarizer`、CLI `--memory` JSONL 持久化
-与 eval 长期记忆任务（见 [Memory 契约](docs/memory.md)）。剩余：Validator 与 P1 硬化。
+与 eval 长期记忆任务（见 [Memory 契约](docs/memory.md)）；F1 收尾：输出契约校验 `Validator`（最终回答 JSON 契约，
+Runner 在提交历史前拦截非法输出）与 A2 余量只读工具 `list_dir`/`search_text`。剩余：P1 硬化。
 
 仓库里**还没有 UE 插件**；`hosts/unreal/` 只是规划。`source/hosts/reference/` 是纯 C++ 参考 Host Adapter
 （SendAsync/worker、RunHandle/generation、主线程 ToolScheduler、迟到结果抑制），UE 侧可按它对齐实现。
@@ -29,17 +30,17 @@ Memory Phase 2 已收尾：`MemoryStore`/`Summarizer` 通用契约、Noop/InMemo
 | `source/integrations/transport/` | 传输层：`HttpTransport` 接口 + Windows 临时 `WinHttpTransport`；跨平台将换 libcurl |
 | `source/integrations/model/` | 模型层：`ChatModel` 接口在 core，`OpenAiChatModel` 在 integrations |
 | `source/runtime/` | 通用 Agent 运行时：`Agent`（身份 + `AgentScope` + 会话 + `AgentDependencies`）、scoped `ServiceRegistry`、`AgentSession`（`Send`）、`AgentExecutor`、`AgentRunner`、`RunContext::Create`、`ExecutionId`、`TurnTransaction`、`TurnWorkspace`、`RunOutcome`、`TurnRecord::ToEvent`、`ToolDispatcher`、`ToolDescriptor`、`ValidateComposition`、`ToolRegistry`、`ToolPolicy`/`ContextPolicy`/`ToolOutputPolicy` |
-| `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（WorkspacePathPolicy、句柄级复核、敏感文件拒绝、UTF-8 校验、大小限制） |
+| `source/plugins/tools/` | 内置工具实现：`ReadFileTool`（WorkspacePathPolicy、句柄级复核、敏感文件拒绝、UTF-8 校验、大小限制）、`ListDirTool`（排序目录列表、敏感/symlink 跳过、条数截断）、`SearchTextTool`（大小写敏感子串检索、行号输出、敏感/二进制/大文件跳过） |
 | `source/plugins/traces/` | JSONL trace 插件：默认开启，记录 turn/model/tool/usage，内容截断与 key 脱敏；usage 聚合与 trace viewer |
 | `source/plugins/memory/` | 记忆插件：`NoopMemoryStore` / `InMemoryMemoryStore` / `JsonlMemoryStore` / `RuleBasedSummarizer` / `ModelSummarizer`（Phase 1/2） |
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
 | `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，交互式；启动仅 `--help/--version/--config/--memory`，其他用命令） |
 | `source/hosts/reference/` | 纯 C++ 参考 Host Adapter：`SendAsync`/worker、`RunHandle`/generation、主线程 ToolScheduler、迟到结果抑制（UE 接入的对照实现） |
-| `tests/` | 单元测试（doctest，191 个 TEST_CASE / 12 个 CTest target，含 DoD、eval mock、Memory） |
+| `tests/` | 单元测试（doctest，214 个 TEST_CASE / 12 个 CTest target，含 DoD、eval mock、Memory、Validator、工具） |
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
 | `third_party/` | 单头依赖（nlohmann/json、doctest） |
 | `.dsh/skills/` | 项目级 DSH skill（`cpp-code-style` 代码规范） |
-| `eval/` | 评测：`tasks.json`（12 条 mock 任务，含长期记忆）+ `eval/README.md`；`agent-eval` 支持 mock/real 模式（mock 离线可复现） |
+| `eval/` | 评测：`tasks.json`（14 条 mock 任务，含长期记忆与只读工具）+ `eval/README.md`；`agent-eval` 支持 mock/real 模式（mock 离线可复现） |
 
 ## 运行时架构
 
@@ -130,10 +131,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1        
 
 - 真实 API 联调：设置 `DEEPSEEK_API_KEY` 后启动 `agent-cli`，在交互提示符输入“读取 README.md 并总结”；
 - file tracer / usage 持久化已实现；继续验证真实服务下的错误处理与使用体验；
-- F1/A3 收尾：Validator；eval/tasks + runner 已完成（mock 模式可复现；real 模式需 `DEEPSEEK_API_KEY`，
-  见 [eval/README](eval/README.md)）；Memory Phase 2 已收尾（会话压缩 + `ModelSummarizer` +
-  CLI `--memory` JSONL 持久化 + eval 长期记忆任务）；
-- A2 余量只读工具：`list_dir` / `search_text`（写工具等审批机制落地后再开）；
+- F1 收尾已完成：Validator（输出契约）与 A2 只读工具（`list_dir`/`search_text`）；eval/tasks + runner 可复现
+  （real 模式需 `DEEPSEEK_API_KEY`，见 [eval/README](eval/README.md)）；Memory Phase 2 已收尾；
 - P1 硬化：模型重试/退避、token/费用硬上限、JSON Schema 参数校验；
 - 跨平台正式实现：把 `WinHttpTransport` 替换为 libcurl（接口不变，UE 宿主仍用 FHttpModule）；
 - UE 接入：按 [UE 宿主接入指南](docs/hosts-unreal.md) 在宿主工程实现 `FMarianaHttpTransport` + `UMarianaSubsystem`。

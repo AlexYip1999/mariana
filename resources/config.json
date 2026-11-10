@@ -14,7 +14,9 @@
   "temperature": 0.0,
   "max_context_chars": 120000,
   "tool_names": [
-    "read_file"
+    "read_file",
+    "list_dir",
+    "search_text"
   ],
   "memory_path": ""
 }

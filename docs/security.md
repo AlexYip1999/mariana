@@ -19,7 +19,7 @@
 ## 工具与信息流安全
 
 - 工具默认只读，`/workspace` 限定可访问根目录，`/tools off` 关闭工具。
-- `read_file` 只接受 workspace 内相对路径；拒绝绝对路径、`..` 越界、symlink/junction 逃逸。
+- 只读工具 `read_file` / `list_dir` / `search_text` 都只接受 workspace 内相对路径；拒绝绝对路径、`..` 越界、symlink/junction 逃逸。
 - Windows 上打开文件后通过 `GetFinalPathNameByHandleW` 对句柄做二次路径复核，降低 check→open TOCTOU 风险。
 - 敏感文件拒绝（启发式，不是完整防护）：`.env` / `.env.*`、`config.local.json`、`.git`、`.docker`、`.kube`、`id_rsa` / `id_ed25519` / `id_ecdsa`、`.git-credentials`、`.netrc`、`.npmrc`、`.pypirc`、`.htpasswd`、`*.key` / `*.pem` / `*.pfx` / `*.p12` / `*.jks` / `*.ppk` / `*.kdbx`。
 - 单文件有读取上限，且只接受 UTF-8 文本；二进制/GBK/UTF-16 会返回错误。

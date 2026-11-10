@@ -220,7 +220,7 @@ runtime::RunErrorCode
   InvalidInput / InvalidConfiguration / Busy
   ModelCallLimit / ToolCallLimit / ToolOutputLimit
   ModelFailure / IncompleteResponse / EmptyResponse
-  ToolDenied / ToolFailure / InvalidToolCall / InternalError
+  ToolDenied / ToolFailure / InvalidToolCall / ValidationFailed / InternalError
 ```
 
 `ChatResponse` / `ToolResult` 只携带 `CallError`；Run 级错误由 `RunOutcome`、`TurnRecord` 和 `ToolExecutionRecord::dispatch_error_code` 携带。`ToRunError` 是唯一映射点。
@@ -244,6 +244,7 @@ runtime::RunErrorCode
 | 成功 | 提交完整本轮 | 保留 |
 | 取消 / deadline / 内部异常 | 回滚到本轮开始 | 保留已登记操作 |
 | 模型失败 / 响应不完整 / 预算耗尽 | 保留用户输入和完整工具批次，移除未完成批次 | 保留 |
+| 输出契约校验失败（ValidationFailed） | 保留用户输入与完整工具批次，不提交非法 assistant | 保留 |
 | 输入/配置预检失败 | 不开始本轮 | 无 |
 | 同 Session Busy | 不开始本轮 | 无 |
 

@@ -25,7 +25,9 @@
 #include "agent/core/system_registry.h"
 #include "agent/model/openai_chat_model.h"
 #include "agent/plugins/memory/in_memory_store.h"
+#include "agent/plugins/tools/list_dir_tool.h"
 #include "agent/plugins/tools/read_file_tool.h"
+#include "agent/plugins/tools/search_text_tool.h"
 #include "agent/runtime/agent.h"
 #include "agent/runtime/agent_profile.h"
 #include "agent/runtime/agent_run.h"
@@ -54,6 +56,8 @@ constexpr std::size_t kDefaultMaxToolOutputBytes = 32 * 1024;
 constexpr const char* kDefaultModel = "deepseek-flash";
 constexpr const char* kDefaultSystemPrompt = "You are an offline evaluation agent. Answer concisely.";
 constexpr const char* kReadFileToolName = "read_file";
+constexpr const char* kListDirToolName = "list_dir";
+constexpr const char* kSearchTextToolName = "search_text";
 constexpr const char* kWorkspaceDirectoryName = "workspace";
 constexpr const char* kApiKeyEnvironmentName = "DEEPSEEK_API_KEY";
 constexpr const char* kAgentName = "agent-eval";
@@ -321,6 +325,7 @@ constexpr runtime::RunErrorCode kRunErrorCodes[] = {
     runtime::RunErrorCode::InvalidToolCall,
     runtime::RunErrorCode::ContextFailure,
     runtime::RunErrorCode::InternalError,
+    runtime::RunErrorCode::ValidationFailed,
 };
 
 constexpr core::CallError kCallErrors[] = {
@@ -1143,7 +1148,7 @@ runtime::AgentProfile MakeTaskProfile(const EvalTask& task)
     runtime::AgentProfile profile;
     profile.model = kDefaultModel;
     profile.system_prompt = task.system_prompt;
-    profile.tool_names = {kReadFileToolName};
+    profile.tool_names = {kReadFileToolName, kListDirToolName, kSearchTextToolName};
     profile.temperature = 0.0;
     profile.max_tokens = kDefaultMaxTokens;
     profile.max_steps = task.max_steps;
@@ -1195,10 +1200,22 @@ RunAttempt ExecuteTask(const EvalTask& task, const std::filesystem::path& worksp
     RunAttempt attempt;
     auto tools = std::make_shared<runtime::ToolRegistry>();
     auto read_file_tool = std::make_shared<plugins::tools::ReadFileTool>(workspace);
+    auto list_dir_tool = std::make_shared<plugins::tools::ListDirTool>(workspace);
+    auto search_text_tool = std::make_shared<plugins::tools::SearchTextTool>(workspace);
     std::string register_error;
     if (!tools->Register(read_file_tool, register_error))
     {
         attempt.setup_error = "cannot register read_file tool: " + register_error;
+        return attempt;
+    }
+    if (!tools->Register(list_dir_tool, register_error))
+    {
+        attempt.setup_error = "cannot register list_dir tool: " + register_error;
+        return attempt;
+    }
+    if (!tools->Register(search_text_tool, register_error))
+    {
+        attempt.setup_error = "cannot register search_text tool: " + register_error;
         return attempt;
     }
 
@@ -1227,7 +1244,7 @@ RunAttempt ExecuteTask(const EvalTask& task, const std::filesystem::path& worksp
         descriptor.id.value = task.id;
         descriptor.name = kAgentName;
         descriptor.version = kAgentVersion;
-        descriptor.capabilities = {kReadFileToolName};
+        descriptor.capabilities = {kReadFileToolName, kListDirToolName, kSearchTextToolName};
         runtime::AgentDependencies agent_dependencies;
         agent_dependencies.executor = runner;
         attempt.agent = std::make_shared<runtime::Agent>(descriptor, profile, agent_dependencies, "eval-" + task.id);

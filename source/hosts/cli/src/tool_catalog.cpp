@@ -1,12 +1,32 @@
 #include "agent/hosts/cli/tool_catalog.h"
 
 #include <exception>
+#include <string>
 #include <utility>
 
+#include "agent/plugins/tools/list_dir_tool.h"
 #include "agent/plugins/tools/read_file_tool.h"
+#include "agent/plugins/tools/search_text_tool.h"
 
 namespace agent::hosts::cli
 {
+
+namespace
+{
+
+runtime::ToolDescriptor MakeReadToolDescriptor(std::string name, std::string description)
+{
+    runtime::ToolDescriptor descriptor;
+    descriptor.name = std::move(name);
+    descriptor.description = std::move(description);
+    descriptor.side_effects = false;
+    descriptor.access_scope = runtime::ToolAccessScope::Read;
+    descriptor.approval = runtime::ToolApprovalMode::NotRequired;
+    descriptor.thread_affinity = "worker";
+    return descriptor;
+}
+
+} // namespace
 
 bool ToolCatalog::Add(std::string name, Factory factory, runtime::ToolDescriptor descriptor)
 {
@@ -82,21 +102,27 @@ std::shared_ptr<runtime::ToolRegistry> ToolCatalog::CreateRegistry(const std::fi
 ToolCatalog DefaultToolCatalog()
 {
     ToolCatalog catalog;
-    runtime::ToolDescriptor read_file;
-    read_file.name = "read_file";
-    read_file.description = "Read a UTF-8 text file inside the workspace.";
-    read_file.side_effects = false;
-    read_file.access_scope = runtime::ToolAccessScope::Read;
-    read_file.approval = runtime::ToolApprovalMode::NotRequired;
-    read_file.thread_affinity = "worker";
-
     (void)catalog.Add(
         "read_file",
         [](const std::filesystem::path& workspace)
         {
             return std::make_shared<plugins::tools::ReadFileTool>(workspace);
         },
-        std::move(read_file));
+        MakeReadToolDescriptor("read_file", "Read a UTF-8 text file inside the workspace."));
+    (void)catalog.Add(
+        "list_dir",
+        [](const std::filesystem::path& workspace)
+        {
+            return std::make_shared<plugins::tools::ListDirTool>(workspace);
+        },
+        MakeReadToolDescriptor("list_dir", "List directory entries inside the workspace."));
+    (void)catalog.Add(
+        "search_text",
+        [](const std::filesystem::path& workspace)
+        {
+            return std::make_shared<plugins::tools::SearchTextTool>(workspace);
+        },
+        MakeReadToolDescriptor("search_text", "Search a case-sensitive substring in workspace text files."));
     return catalog;
 }
 

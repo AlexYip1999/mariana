@@ -6,6 +6,7 @@ add_library(agent_runtime
     src/composition.cpp
     src/context_policy.cpp
     src/execution_id.cpp
+    src/json_answer_validator.cpp
     src/run_context.cpp
     src/tool_output_policy.cpp
     src/tool_registry.cpp
@@ -23,6 +24,8 @@ target_include_directories(agent_runtime
 target_link_libraries(agent_runtime
     PUBLIC
         agent_core
+    PRIVATE
+        agent_third_party
 )
 
 target_compile_features(agent_runtime PUBLIC cxx_std_20)

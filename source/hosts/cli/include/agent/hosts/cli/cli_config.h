@@ -43,7 +43,7 @@ struct CliConfig
     std::size_t max_context_chars = 120000;
 
     // 工具
-    std::vector<std::string> tool_names = {"read_file"};
+    std::vector<std::string> tool_names = {"read_file", "list_dir", "search_text"};
 
     // 长期记忆：JSONL 文件路径；空 = 关闭（可用 --memory 覆盖）
     std::string memory_path;

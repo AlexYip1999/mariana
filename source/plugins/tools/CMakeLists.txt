@@ -1,5 +1,7 @@
 add_library(agent_tools
+    src/list_dir_tool.cpp
     src/read_file_tool.cpp
+    src/search_text_tool.cpp
     src/workspace_path_policy.cpp
 )
 

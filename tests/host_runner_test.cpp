@@ -143,8 +143,10 @@ TEST_CASE("workspace changes preserve tool configuration until explicitly enable
         REQUIRE(requests->size() == 4);
         CHECK_FALSE((*requests)[0].contains("tools"));
         CHECK_FALSE((*requests)[1].contains("tools"));
-        REQUIRE((*requests)[2]["tools"].size() == 1);
+        REQUIRE((*requests)[2]["tools"].size() == 3);
         CHECK((*requests)[2]["tools"][0]["function"]["name"] == "read_file");
+        CHECK((*requests)[2]["tools"][1]["function"]["name"] == "list_dir");
+        CHECK((*requests)[2]["tools"][2]["function"]["name"] == "search_text");
         CHECK_FALSE((*requests)[3].contains("tools"));
     }
     std::filesystem::remove_all(workspace);

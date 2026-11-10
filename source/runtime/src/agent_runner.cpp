@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <exception>
+#include <optional>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "agent/core/utf8.h"
@@ -243,11 +245,56 @@ void BuildMemoryContext(const RunnerDependencies& dependencies, const AgentProfi
     memory_text = std::move(rendered);
 }
 
+/// 最终回答写入对话前的可选输出契约校验。
+/// 返回有值 = 本轮应失败（校验不通过或校验器异常），空 = 通过、可提交回答。
+std::optional<RunOutcome> ValidateFinalAnswer(const RunnerDependencies& dependencies, const RunOutcome& result,
+                                              const RunContext& context, const std::string& user_input,
+                                              const std::string& content)
+{
+    if (!dependencies.validator)
+    {
+        return std::nullopt;
+    }
+
+    // 候选结果描述“如果本轮成功”的最终回答，供 Validator 判断输出契约。
+    RunOutcome candidate = result;
+    candidate.status = RunStatus::Completed;
+    candidate.content = content;
+
+    ValidationContext validation_context;
+    validation_context.session_id = context.session_id;
+    validation_context.run_id = context.run_id;
+    validation_context.user_input = user_input;
+
+    ValidationResult validation;
+    try
+    {
+        validation = dependencies.validator->Validate(candidate, validation_context);
+    }
+    catch (const std::exception& error)
+    {
+        return Decided(result, RunStatus::Failed, RunErrorCode::InternalError,
+                       std::string("validator threw: ") + error.what());
+    }
+    catch (...)
+    {
+        return Decided(result, RunStatus::Failed, RunErrorCode::InternalError, "validator threw: unknown exception");
+    }
+
+    if (validation.ok)
+    {
+        return std::nullopt;
+    }
+    return Decided(result, RunStatus::Failed, RunErrorCode::ValidationFailed,
+                   "output validation failed: " + validation.Describe());
+}
+
 } // namespace
 
 static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentProfile& profile,
                            TurnWorkspace& workspace, const RunContext& context, const SystemNotifier& notifier,
-                           const std::string& memory_context, const std::string& provider_context, RunOutcome& result)
+                           const std::string& user_input, const std::string& memory_context,
+                           const std::string& provider_context, RunOutcome& result)
 {
     core::Conversation& conversation = workspace.Conversation();
     const auto specs = dependencies.tools->SpecsFor(profile.tool_names);
@@ -324,6 +371,15 @@ static RunOutcome RunSteps(const RunnerDependencies& dependencies, const AgentPr
                 return Decided(std::move(result), RunStatus::Failed, RunErrorCode::EmptyResponse,
                                "model returned empty response");
             }
+
+            // 输出契约校验：不通过或校验器异常时不把该 assistant 消息写入对话。
+            const std::optional<RunOutcome> rejected =
+                ValidateFinalAnswer(dependencies, result, context, user_input, response.content);
+            if (rejected.has_value())
+            {
+                return *rejected;
+            }
+
             conversation.Append(core::ChatRole::Assistant, response.content);
             return Decided(std::move(result), RunStatus::Completed, RunErrorCode::None, {}, response.content);
         }
@@ -466,8 +522,8 @@ RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& work
                 }
                 else
                 {
-                    outcome = RunSteps(m_dependencies, profile, workspace, context, notifier, memory_context,
-                                       provider_context, outcome);
+                    outcome = RunSteps(m_dependencies, profile, workspace, context, notifier, user_input,
+                                       memory_context, provider_context, outcome);
                 }
             }
         }

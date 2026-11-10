@@ -31,6 +31,8 @@ include/agent/runtime/
   agent_runner.h       RunnerDependencies / AgentRunner
   agent_executor.h     AgentExecutor（可替换执行策略）
   run_context.h        RunContext / RunBudget / RunStatus / RunErrorCode
+  validator.h          Validator / ValidationResult / ValidationIssue / ValidationContext
+  json_answer_validator.h JsonAnswerValidator（JSON 对象 / 必需 key 输出校验）
   turn_transaction.h   TurnWorkspace / TurnTransaction
   turn_executor.h      ExecuteTurn（Session 与测试共用）
   tool_registry.h      ToolRegistry（注册/SpecsFor/Execute/Descriptor）
@@ -72,7 +74,8 @@ include/agent/hosts/reference/reference_host.h  参考 Host Adapter（非生产�
 
 `RunErrorCode`：`None` / `Cancelled` / `DeadlineExceeded` / `InvalidInput` / `InvalidConfiguration` / `Busy` /
 `ModelCallLimit` / `ToolCallLimit` / `ToolOutputLimit` / `ModelFailure` / `IncompleteResponse` /
-`EmptyResponse` / `ToolDenied` / `ToolFailure` / `InvalidToolCall` / `ContextFailure` / `InternalError`。
+`EmptyResponse` / `ToolDenied` / `ToolFailure` / `InvalidToolCall` / `ContextFailure` / `InternalError` /
+`ValidationFailed`。
 
 历史提交规则（`TurnTransaction`）：
 
@@ -81,6 +84,7 @@ include/agent/hosts/reference/reference_host.h  参考 Host Adapter（非生产�
 | Completed | 提交完整本轮 | 保留 |
 | Cancelled / Deadline / InternalError / InvalidConfiguration / ContextFailure | 回滚到本轮开始 | 保留已登记操作 |
 | ModelFailure / IncompleteResponse / BudgetExceeded | 保留用户输入与完整工具批次 | 保留 |
+| ValidationFailed | 保留用户输入与完整工具批次；不提交非法 assistant 输出 | 保留 |
 | 预检失败 / Busy | 不开始本轮 | 无 |
 
 ### 2.3 Tool
@@ -129,6 +133,47 @@ class AgentSystem
 - scoped：HostScope → AgentScope → SessionScope，子 scope 可 fallback 查父 scope；
 - 按 `std::type_index(typeid(T))` 存服务（**宿主必须开启 RTTI**）；
 - 不用于 core 内部 service locator；Host 组合根显式注入依赖。
+
+### 2.7 Validator（输出契约校验）
+
+```cpp
+struct ValidationIssue
+{
+    std::string code;
+    std::string message;
+};
+
+struct ValidationResult
+{
+    bool ok = true;
+    std::vector<ValidationIssue> issues;
+    std::string Describe() const;   // ok → "ok"；否则 "code: message; code2: message2"
+};
+
+struct ValidationContext
+{
+    std::string session_id;
+    std::string run_id;
+    std::string user_input;
+};
+
+class Validator
+{
+  public:
+    virtual ~Validator() = default;
+    virtual ValidationResult Validate(const RunOutcome& outcome, const ValidationContext& context) = 0;
+};
+```
+
+- 挂载：`RunnerDependencies.validator`（可选；为空表示不校验）。
+- 调用时机：每轮**最终回答**（`tool_calls` 为空且 content 非空）写入对话前；工具步骤/失败分支不调用。
+- 失败语义：`ok=false` → `RunStatus::Failed` + `RunErrorCode::ValidationFailed`，`error` 形如
+  `output validation failed: <Describe()>`；**非法 assistant 消息不写入历史**，用户输入与完整工具批次保留，
+  `TurnRecord` 仍登记失败。
+- Validator 抛异常 → `RunErrorCode::InternalError`，`error` 形如 `validator threw: <what>`；按 InternalError 回滚本轮。
+- 内置 `JsonAnswerValidator`（`json_answer_validator.h`）：只校验 `Completed` 的最终回答，要求是 JSON 对象；
+  `Config.required_keys` 逐项检查；issue code 为 `invalid_json` / `not_object` / `missing_key`；
+  `Config.allow_non_object = true` 时允许任意合法 JSON。
 
 ## 3. 典型组合根（宿主）
 

@@ -38,7 +38,7 @@ class ToolCatalog
     std::vector<Entry> m_entries;
 };
 
-/// CLI 内置工具集（当前只有 read_file）。
+/// CLI 内置工具集（read_file / list_dir / search_text）。
 ToolCatalog DefaultToolCatalog();
 
 } // namespace agent::hosts::cli

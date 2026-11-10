@@ -607,6 +607,121 @@
         "content_contains": "青绿色",
         "request_contains": "青绿色"
       }
+    },
+    {
+      "id": "list_dir_orientation",
+      "kind": "list_dir",
+      "description": "List the workspace directory, then read notes.md and report its release marker.",
+      "input": "List the workspace directory, then read notes.md and report its release marker.",
+      "max_steps": 5,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-list-dir-1",
+              "name": "list_dir",
+              "arguments": {
+                "path": "."
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 45,
+            "completion_tokens": 5,
+            "total_tokens": 50
+          }
+        },
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-list-dir-read-2",
+              "name": "read_file",
+              "arguments": {
+                "path": "notes.md"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 60,
+            "completion_tokens": 5,
+            "total_tokens": 65
+          }
+        },
+        {
+          "content": "The workspace contains notes.md; NOTES_MARKER_42 is its release marker.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 90,
+            "completion_tokens": 12,
+            "total_tokens": 102
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 3,
+        "max_steps": 3,
+        "tools": [
+          "list_dir",
+          "read_file"
+        ],
+        "tool_results_ok": [
+          true,
+          true
+        ],
+        "content_contains": "NOTES_MARKER_42"
+      }
+    },
+    {
+      "id": "search_text_marker",
+      "kind": "search_text",
+      "description": "Search the workspace for FAQ_MARKER_7 and report where it appears.",
+      "input": "Search the workspace for FAQ_MARKER_7 and report where it appears.",
+      "max_steps": 4,
+      "script": [
+        {
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call-search-text-1",
+              "name": "search_text",
+              "arguments": {
+                "query": "FAQ_MARKER_7"
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 45,
+            "completion_tokens": 5,
+            "total_tokens": 50
+          }
+        },
+        {
+          "content": "FAQ_MARKER_7 appears in faq.txt.",
+          "finish_reason": "stop",
+          "usage": {
+            "prompt_tokens": 80,
+            "completion_tokens": 8,
+            "total_tokens": 88
+          }
+        }
+      ],
+      "expect": {
+        "status": "Completed",
+        "error_code": "None",
+        "min_steps": 2,
+        "max_steps": 2,
+        "tools": [
+          "search_text"
+        ],
+        "tool_results_ok": [
+          true
+        ],
+        "content_contains": "FAQ_MARKER_7"
+      }
     }
   ]
 }

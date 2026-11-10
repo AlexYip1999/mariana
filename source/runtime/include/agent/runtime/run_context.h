@@ -66,6 +66,7 @@ enum class RunErrorCode
     InvalidToolCall,
     ContextFailure,
     InternalError,
+    ValidationFailed,
 };
 
 inline const char* ToString(RunErrorCode value)
@@ -139,6 +140,10 @@ inline const char* ToString(RunErrorCode value)
         case RunErrorCode::InternalError:
         {
             return "InternalError";
+        }
+        case RunErrorCode::ValidationFailed:
+        {
+            return "ValidationFailed";
         }
     }
     return "Unknown";

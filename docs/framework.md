@@ -229,7 +229,7 @@ RunErrorCode
   InvalidInput / InvalidConfiguration / Busy
   ModelCallLimit / ToolCallLimit / ToolOutputLimit
   ModelFailure / IncompleteResponse / EmptyResponse
-  ToolDenied / ToolFailure / InvalidToolCall / InternalError
+  ToolDenied / ToolFailure / InvalidToolCall / InternalError / ValidationFailed
 ```
 
 规则：
@@ -451,8 +451,9 @@ MVP 只消费：
 
 - Tool：ToolRegistry + ToolPolicy + ToolDispatcher；
 - Context：ContextPipeline，按顺序注入，失败 fail-closed；
-- Executor：AgentExecutor，可选 ValidatingExecutor 装饰器；
-- Validator：校验 RunOutcome / 输出契约；
+- Executor：AgentExecutor；输出契约校验通过 `RunnerDependencies.validator` 注入；
+- Validator：`Validator` 接口 + 内置 `JsonAnswerValidator` 已接入 Runner——最终回答写入对话前校验输出契约，
+  失败 → `ValidationFailed`（不提交非法 assistant，用户输入保留），校验器异常 → `InternalError`；
 - Policy：Host 权限 ∩ Agent 策略，deny wins；
 - 所有组件在 Build 期校验，不在运行期才发现缺依赖。
 
@@ -578,7 +579,9 @@ PR5  ToolDescriptor + ValidateComposition
 > fail-closed、预算裁剪）；`ToolPolicy::AllowsSideEffects` 副作用授权已接入组合校验；Memory Phase 1 已交付
 > （`MemoryStore`/`Summarizer` 契约 + InMemory/Noop + 规则摘要 + `<memory>` 召回注入，见
 > [`memory.md`](memory.md)）；Phase 2 已接入 Session 会话压缩（阈值触发 → 摘要 System 消息替换旧轮次）与
-> `ModelSummarizer`，CLI 已提供 `--memory` JSONL 持久化、eval 已提供长期记忆任务；剩余 Validator 与 P1 硬化。
+> `ModelSummarizer`，CLI 已提供 `--memory` JSONL 持久化、eval 已提供长期记忆任务；Validator 已交付
+> （`Validator` 接口 + `JsonAnswerValidator`，最终回答写入对话前校验，失败 → `ValidationFailed` 且不提交
+> 非法输出，见 [`api.md`](api.md)），剩余 P1 硬化。
 > ContextPipeline（多 Provider 顺序注入）与强类型上下文留待后续。
 
 ### F2：B1 UE Editor

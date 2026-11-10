@@ -11,7 +11,9 @@
 #include <nlohmann/json.hpp>
 
 #include "agent/core/tool.h"
+#include "agent/plugins/tools/list_dir_tool.h"
 #include "agent/plugins/tools/read_file_tool.h"
+#include "agent/plugins/tools/search_text_tool.h"
 
 namespace
 {
@@ -237,4 +239,269 @@ TEST_CASE("rejects directories and oversized files")
     CHECK_FALSE(missing.ok);
     CHECK((missing.error.find("file not found") != std::string::npos ||
            missing.error.find("cannot inspect file") != std::string::npos));
+}
+
+TEST_CASE("lists a directory in sorted order")
+{
+    TempWorkspace workspace;
+    std::filesystem::create_directories(workspace.Path() / "subdir");
+    WriteFile(workspace.Path() / "b.txt", "12");
+    WriteFile(workspace.Path() / "a.txt", "12345");
+
+    agent::plugins::tools::ListDirTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute("{}");
+
+    CHECK(tool.Name() == "list_dir");
+    CHECK(tool.Spec().parameters_json.find("\"path\"") != std::string::npos);
+    CHECK(result.ok);
+    CHECK(result.content == "file a.txt (5 bytes)\nfile b.txt (2 bytes)\ndir subdir");
+}
+
+TEST_CASE("lists a subdirectory")
+{
+    TempWorkspace workspace;
+    std::filesystem::create_directories(workspace.Path() / "subdir");
+    WriteFile(workspace.Path() / "subdir" / "one.txt", "one");
+    WriteFile(workspace.Path() / "root.txt", "root");
+
+    agent::plugins::tools::ListDirTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute(R"({"path":"subdir"})");
+
+    CHECK(result.ok);
+    CHECK(result.content == "file one.txt (3 bytes)");
+}
+
+TEST_CASE("list_dir truncates entries and skips sensitive files")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "a.txt", "a");
+    WriteFile(workspace.Path() / "b.txt", "b");
+    WriteFile(workspace.Path() / "c.txt", "c");
+    WriteFile(workspace.Path() / ".env", "SECRET=1");
+
+    agent::plugins::tools::ListDirTool tool(workspace.Path(), 2);
+    const agent::core::ToolResult result = tool.Execute("{}");
+
+    CHECK(result.ok);
+    CHECK(result.content == "file a.txt (1 bytes)\nfile b.txt (1 bytes)\n... (1 more entries)");
+    CHECK(result.content.find(".env") == std::string::npos);
+}
+
+TEST_CASE("list_dir skips symlinks")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "real.txt", "real");
+    std::error_code error;
+    std::filesystem::create_symlink(workspace.Path() / "real.txt", workspace.Path() / "link.txt", error);
+    if (error)
+    {
+        WARN("symlink creation is not available");
+        return;
+    }
+
+    agent::plugins::tools::ListDirTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute("{}");
+
+    CHECK(result.ok);
+    CHECK(result.content == "file real.txt (4 bytes)");
+}
+
+TEST_CASE("list_dir rejects invalid paths")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "file.txt", "text");
+
+    agent::plugins::tools::ListDirTool tool(workspace.Path());
+
+    const nlohmann::json absolute_args{
+        {
+            "path",
+            (workspace.Path() / "subdir").string(),
+        },
+    };
+    const agent::core::ToolResult absolute = tool.Execute(absolute_args.dump());
+
+    CHECK_FALSE(absolute.ok);
+    CHECK(absolute.error.find("absolute paths") != std::string::npos);
+
+    const agent::core::ToolResult escape = tool.Execute(R"({"path":"../outside"})");
+
+    CHECK_FALSE(escape.ok);
+    CHECK(escape.error.find("escapes workspace") != std::string::npos);
+
+    const agent::core::ToolResult sensitive = tool.Execute(R"({"path":".env"})");
+
+    CHECK_FALSE(sensitive.ok);
+    CHECK(sensitive.error.find("sensitive") != std::string::npos);
+
+    const agent::core::ToolResult not_directory = tool.Execute(R"({"path":"file.txt"})");
+
+    CHECK_FALSE(not_directory.ok);
+    CHECK(not_directory.error.find("not a directory") != std::string::npos);
+
+    const agent::core::ToolResult missing = tool.Execute(R"({"path":"missing"})");
+
+    CHECK_FALSE(missing.ok);
+    CHECK(missing.error.find("not found") != std::string::npos);
+
+    CHECK_FALSE(tool.Execute(R"({"path":123})").ok);
+    CHECK_FALSE(tool.Execute(R"({"other":"x"})").ok);
+    CHECK_FALSE(tool.Execute("{").ok);
+}
+
+TEST_CASE("search_text reports matching line numbers in one file")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "notes.txt", "alpha\nBeta\ngamma alpha\n");
+
+    agent::plugins::tools::SearchTextTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute(R"({"query":"alpha","path":"notes.txt"})");
+
+    CHECK(tool.Name() == "search_text");
+    CHECK(tool.Spec().parameters_json.find("\"query\"") != std::string::npos);
+    CHECK(result.ok);
+    CHECK(result.content == "notes.txt:1: alpha\nnotes.txt:3: gamma alpha");
+
+    const agent::core::ToolResult case_sensitive = tool.Execute(R"({"query":"beta","path":"notes.txt"})");
+
+    CHECK(case_sensitive.ok);
+    CHECK(case_sensitive.content.empty());
+}
+
+TEST_CASE("search_text scans files in relative path order")
+{
+    TempWorkspace workspace;
+    std::filesystem::create_directories(workspace.Path() / "sub");
+    WriteFile(workspace.Path() / "b.txt", "needle b\n");
+    WriteFile(workspace.Path() / "a.txt", "needle a\n");
+    WriteFile(workspace.Path() / "sub" / "c.txt", "needle c\n");
+    WriteFile(workspace.Path() / "crlf.txt", "one\r\nneedle two\r\n");
+
+    agent::plugins::tools::SearchTextTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute(R"({"query":"needle"})");
+
+    CHECK(result.ok);
+    const std::string expected = "a.txt:1: needle a\nb.txt:1: needle b\ncrlf.txt:2: needle two\nsub/c.txt:1: needle c";
+    CHECK(result.content == expected);
+}
+
+TEST_CASE("search_text truncates results")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "many.txt", "match\nmatch\nmatch\n");
+
+    agent::plugins::tools::SearchTextTool tool(workspace.Path(), 256 * 1024, 2);
+    const agent::core::ToolResult result = tool.Execute(R"({"query":"match"})");
+
+    CHECK(result.ok);
+    CHECK(result.content == "many.txt:1: match\nmany.txt:2: match\n... (results truncated)");
+}
+
+TEST_CASE("search_text truncates scanned files")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "a.txt", "hit\n");
+    WriteFile(workspace.Path() / "b.txt", "hit\n");
+
+    agent::plugins::tools::SearchTextTool tool(workspace.Path(), 256 * 1024, 50, 1);
+    const agent::core::ToolResult result = tool.Execute(R"({"query":"hit"})");
+
+    CHECK(result.ok);
+    CHECK(result.content == "a.txt:1: hit\n... (scan truncated)");
+}
+
+TEST_CASE("search_text skips sensitive binary and oversized files")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / ".env", "needle\n");
+    WriteFile(workspace.Path() / "large.txt", "needle oversized padding");
+    WriteFile(workspace.Path() / "small.txt", "needle here\n");
+    {
+        std::ofstream file(workspace.Path() / "binary.bin", std::ios::binary);
+        file << "needle";
+        const char nul = '\0';
+        file.write(&nul, 1);
+    }
+
+    agent::plugins::tools::SearchTextTool tool(workspace.Path(), 16);
+    const agent::core::ToolResult result = tool.Execute(R"({"query":"needle"})");
+
+    CHECK(result.ok);
+    CHECK(result.content == "small.txt:1: needle here");
+}
+
+TEST_CASE("search_text skips symlinks")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "real.txt", "needle\n");
+    std::error_code error;
+    std::filesystem::create_symlink(workspace.Path() / "real.txt", workspace.Path() / "link.txt", error);
+    if (error)
+    {
+        WARN("symlink creation is not available");
+        return;
+    }
+
+    agent::plugins::tools::SearchTextTool tool(workspace.Path());
+    const agent::core::ToolResult result = tool.Execute(R"({"query":"needle"})");
+
+    CHECK(result.ok);
+    CHECK(result.content == "real.txt:1: needle");
+}
+
+TEST_CASE("search_text rejects invalid arguments")
+{
+    TempWorkspace workspace;
+    WriteFile(workspace.Path() / "file.txt", "text");
+
+    agent::plugins::tools::SearchTextTool tool(workspace.Path());
+
+    const agent::core::ToolResult missing_query = tool.Execute(R"({"path":"."})");
+
+    CHECK_FALSE(missing_query.ok);
+    CHECK(missing_query.error.find("query") != std::string::npos);
+
+    const agent::core::ToolResult empty_query = tool.Execute(R"({"query":""})");
+
+    CHECK_FALSE(empty_query.ok);
+    CHECK(empty_query.error.find("empty") != std::string::npos);
+
+    const agent::core::ToolResult wrong_query_type = tool.Execute(R"({"query":123})");
+
+    CHECK_FALSE(wrong_query_type.ok);
+
+    const agent::core::ToolResult wrong_max_results = tool.Execute(R"({"query":"x","max_results":0})");
+
+    CHECK_FALSE(wrong_max_results.ok);
+    CHECK(wrong_max_results.error.find("max_results") != std::string::npos);
+
+    const agent::core::ToolResult unknown_argument = tool.Execute(R"({"query":"x","regex":true})");
+
+    CHECK_FALSE(unknown_argument.ok);
+    CHECK(unknown_argument.error.find("unknown argument") != std::string::npos);
+
+    nlohmann::json absolute_args;
+    absolute_args["query"] = "x";
+    absolute_args["path"] = (workspace.Path() / "file.txt").string();
+    const agent::core::ToolResult absolute = tool.Execute(absolute_args.dump());
+
+    CHECK_FALSE(absolute.ok);
+    CHECK(absolute.error.find("absolute paths") != std::string::npos);
+
+    const agent::core::ToolResult escape = tool.Execute(R"({"query":"x","path":"../outside"})");
+
+    CHECK_FALSE(escape.ok);
+    CHECK(escape.error.find("escapes workspace") != std::string::npos);
+
+    const agent::core::ToolResult sensitive = tool.Execute(R"({"query":"x","path":".env"})");
+
+    CHECK_FALSE(sensitive.ok);
+    CHECK(sensitive.error.find("sensitive") != std::string::npos);
+
+    const agent::core::ToolResult missing_path = tool.Execute(R"({"query":"x","path":"missing.txt"})");
+
+    CHECK_FALSE(missing_path.ok);
+    CHECK(missing_path.error.find("not found") != std::string::npos);
+
+    CHECK_FALSE(tool.Execute("{").ok);
 }
