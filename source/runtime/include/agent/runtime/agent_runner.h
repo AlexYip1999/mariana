@@ -41,6 +41,8 @@ struct RunnerDependencies
     std::shared_ptr<core::ContextProvider> context_provider;
     /// 可选：长期记忆召回（由 AgentProfile::memory_policy 控制是否启用）；为空表示不召回。
     std::shared_ptr<core::MemoryStore> memory;
+    /// 可选：会话压缩（历史超阈值时由 Session 调用）；为空表示不压缩。
+    std::shared_ptr<core::Summarizer> summarizer;
 };
 
 /// 默认 ReAct 执行器：模型请求 → tool_calls → 执行工具 → 继续，直到最终回答或 max_steps。
@@ -55,6 +57,8 @@ class AgentRunner : public AgentExecutor
     std::optional<std::string> ValidationError(const AgentProfile& profile) const override;
 
     std::shared_ptr<core::SystemRegistry> SystemRegistry() const override;
+
+    std::shared_ptr<core::Summarizer> Summarizer() const override;
 
   private:
     RunnerDependencies m_dependencies;

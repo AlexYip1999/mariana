@@ -1,9 +1,11 @@
 #include "agent/runtime/agent_session.h"
 
 #include <algorithm>
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 
+#include "agent/core/utf8.h"
 #include "agent/runtime/execution_id.h"
 #include "agent/runtime/system_notifier.h"
 #include "agent/runtime/turn_executor.h"
@@ -72,6 +74,139 @@ bool PreflightFailure(const AgentProfile& profile, const std::string& user_input
         return true;
     }
     return false;
+}
+
+std::size_t EstimateMessageChars(const core::ChatMessage& message)
+{
+    std::size_t total = message.content.size() + message.tool_call_id.size();
+    for (const core::ToolCall& call : message.tool_calls)
+    {
+        total += call.id.size() + call.name.size() + call.arguments_json.size();
+    }
+    return total;
+}
+
+std::size_t EstimateConversationChars(const core::Conversation& conversation)
+{
+    std::size_t total = 0;
+    for (const core::ChatMessage& message : conversation.messages)
+    {
+        total += EstimateMessageChars(message);
+    }
+    return total;
+}
+
+bool IsSummaryMessage(const core::ChatMessage& message)
+{
+    return message.role == core::ChatRole::System && message.content.rfind(core::kSummaryMessagePrefix, 0) == 0;
+}
+
+std::size_t SystemPrefixEnd(const std::vector<core::ChatMessage>& messages)
+{
+    std::size_t end = 0;
+    while (end < messages.size() && messages[end].role == core::ChatRole::System)
+    {
+        ++end;
+    }
+    return end;
+}
+
+std::vector<std::size_t> UserMessageIndices(const std::vector<core::ChatMessage>& messages, std::size_t start)
+{
+    std::vector<std::size_t> indices;
+    for (std::size_t index = start; index < messages.size(); ++index)
+    {
+        if (messages[index].role == core::ChatRole::User)
+        {
+            indices.push_back(index);
+        }
+    }
+    return indices;
+}
+
+core::CallContext MakeCompactionCall(const AgentProfile& profile)
+{
+    const int timeout_ms = profile.turn_timeout_ms > 0 ? profile.turn_timeout_ms : 30000;
+    core::CallContext call;
+    call.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    return call;
+}
+
+bool ShouldCompact(const AgentProfile& profile, const core::Conversation& conversation)
+{
+    const MemoryPolicy& policy = profile.memory_policy;
+    if (!policy.enable_compaction || policy.compact_trigger_chars == 0)
+    {
+        return false;
+    }
+    return EstimateConversationChars(conversation) >= policy.compact_trigger_chars;
+}
+
+/// 把旧轮次压成一条摘要 System 消息；成功时替换 conversation。
+bool TryCompact(const AgentProfile& profile, core::Summarizer& summarizer, core::Conversation& conversation)
+{
+    const MemoryPolicy& policy = profile.memory_policy;
+    const std::size_t system_end = SystemPrefixEnd(conversation.messages);
+    const std::vector<std::size_t> user_indices = UserMessageIndices(conversation.messages, system_end);
+    const std::size_t keep = policy.compact_keep_recent_turns == 0 ? 1 : policy.compact_keep_recent_turns;
+    if (user_indices.size() <= keep)
+    {
+        return false;
+    }
+    const std::size_t split = user_indices[user_indices.size() - keep];
+
+    // 保留非摘要的前导 System 消息（system prompt），旧摘要稍后替换。
+    std::vector<core::ChatMessage> prefix;
+    for (std::size_t index = 0; index < system_end; ++index)
+    {
+        if (!IsSummaryMessage(conversation.messages[index]))
+        {
+            prefix.push_back(conversation.messages[index]);
+        }
+    }
+
+    core::SummaryRequest request;
+    request.scope = policy.recall_scopes.empty() ? core::MemoryScope{} : policy.recall_scopes.front();
+    request.max_chars = policy.compact_summary_max_chars;
+    request.call = MakeCompactionCall(profile);
+    request.turns.assign(conversation.messages.begin() + static_cast<std::ptrdiff_t>(system_end),
+                         conversation.messages.begin() + static_cast<std::ptrdiff_t>(split));
+    if (request.turns.empty())
+    {
+        return false;
+    }
+
+    core::SummaryResult result;
+    try
+    {
+        result = summarizer.Summarize(request);
+    }
+    catch (...)
+    {
+        // 压缩失败保留原历史，不影响会话。
+        return false;
+    }
+    if (!result.ok || result.summary.empty())
+    {
+        return false;
+    }
+    if (request.max_chars > 0 && result.summary.size() > request.max_chars)
+    {
+        result.summary.resize(core::Utf8PrefixSize(result.summary, request.max_chars));
+    }
+
+    core::Conversation compacted;
+    compacted.session_id = conversation.session_id;
+    compacted.messages = std::move(prefix);
+    core::ChatMessage summary_message;
+    summary_message.role = core::ChatRole::System;
+    summary_message.content = std::string(core::kSummaryMessagePrefix) + result.summary;
+    compacted.messages.push_back(std::move(summary_message));
+    compacted.messages.insert(compacted.messages.end(),
+                              conversation.messages.begin() + static_cast<std::ptrdiff_t>(split),
+                              conversation.messages.end());
+    conversation = std::move(compacted);
+    return true;
 }
 
 } // namespace
@@ -181,8 +316,44 @@ AgentRunResult AgentSession::Send(const std::string& user_input, const RunOption
             m_records.erase(m_records.begin(), m_records.begin() + (m_records.size() - m_max_records));
         }
     }
+
+    CompactIfNeeded();
+
     SystemNotifier(*m_systems).TurnFinished(execution.result.ToEvent());
     return execution.result;
+}
+
+void AgentSession::CompactIfNeeded()
+{
+    const std::shared_ptr<core::Summarizer> summarizer = m_executor ? m_executor->Summarizer() : nullptr;
+    if (!summarizer)
+    {
+        return;
+    }
+
+    AgentProfile profile;
+    core::Conversation snapshot;
+    {
+        std::lock_guard state_lock(m_state_mutex);
+        profile = m_profile;
+        if (!profile.memory_policy.enable_compaction)
+        {
+            return;
+        }
+        snapshot = m_conversation;
+    }
+
+    if (!ShouldCompact(profile, snapshot))
+    {
+        return;
+    }
+    if (!TryCompact(profile, *summarizer, snapshot))
+    {
+        return;
+    }
+
+    std::lock_guard state_lock(m_state_mutex);
+    m_conversation = std::move(snapshot);
 }
 
 bool AgentSession::ClearHistory()

@@ -11,6 +11,9 @@
 namespace agent::core
 {
 
+/// 会话压缩写入的 System 消息前缀；Runtime 用它识别并替换旧摘要，Host 可据此过滤。
+inline constexpr const char* kSummaryMessagePrefix = "[conversation-summary]\n";
+
 /// 中期压缩请求：把一段旧轮次压成可继续使用的摘要。
 struct SummaryRequest
 {

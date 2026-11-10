@@ -168,6 +168,7 @@ UI EventQueue     Notifier 只投递，GT 消费
 - core 不提供 `SendAsync` / AgentManager / 多 Agent 调度（按设计属于 Host；参考 adapter 是示例，不是生产调度器）。
 - 无多工具并发（同一 turn 串行执行）；无模型调用重试/退避/token 硬上限（F1 后续）。
 - `approval = Required/Async` 工具暂不可执行（审批 UI/回调未实现）。
-- Memory：Phase 1 已提供 `MemoryStore`/`Summarizer` 契约、`Noop`/`InMemory` 实现、规则摘要与每轮 `<memory>` 召回注入
-  （见 [memory.md](memory.md)）；会话压缩、持久化（SQLite/SaveGame）、模型摘要待后续阶段。
+- Memory：Phase 1/2 已提供 `MemoryStore`/`Summarizer` 契约、`Noop`/`InMemory` 实现、`<memory>` 召回注入、
+  会话压缩与 `RuleBasedSummarizer`/`ModelSummarizer`（见 [memory.md](memory.md)）；CLI/UE 持久化
+  （SQLite/SaveGame）、eval 长期记忆任务待后续阶段。
 - Eval harness：`agent-eval` mock 模式已提供（10/10 离线可复现），real 模式需 `DEEPSEEK_API_KEY`。

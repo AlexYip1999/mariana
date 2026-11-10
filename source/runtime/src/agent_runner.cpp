@@ -391,6 +391,11 @@ std::shared_ptr<core::SystemRegistry> AgentRunner::SystemRegistry() const
     return m_dependencies.systems;
 }
 
+std::shared_ptr<core::Summarizer> AgentRunner::Summarizer() const
+{
+    return m_dependencies.summarizer;
+}
+
 RunOutcome AgentRunner::RunTurn(const AgentProfile& profile, TurnWorkspace& workspace, const std::string& user_input,
                                 const RunContext& context)
 {

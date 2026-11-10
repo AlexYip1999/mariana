@@ -5,6 +5,7 @@
 #include <string>
 
 #include "agent/core/conversation.h"
+#include "agent/core/summarizer.h"
 #include "agent/core/system_registry.h"
 #include "agent/runtime/agent_run.h"
 #include "agent/runtime/turn_transaction.h"
@@ -29,6 +30,12 @@ class AgentExecutor
 
     /// 执行器实际使用的观察者注册表；仅用于组合期一致性校验，可为空。
     virtual std::shared_ptr<core::SystemRegistry> SystemRegistry() const
+    {
+        return nullptr;
+    }
+
+    /// 可选的会话压缩实现；Session 在历史超过阈值时调用，空表示不压缩。
+    virtual std::shared_ptr<core::Summarizer> Summarizer() const
     {
         return nullptr;
     }

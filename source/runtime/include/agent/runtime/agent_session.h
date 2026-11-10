@@ -41,6 +41,8 @@ class AgentSession
 
   private:
     void AppendSystemPrompt();
+    /// 历史超过 MemoryPolicy 阈值时调用 Summarizer 压缩旧轮次；失败静默保留原历史。
+    void CompactIfNeeded();
 
     AgentProfile m_profile;
     std::shared_ptr<AgentExecutor> m_executor;

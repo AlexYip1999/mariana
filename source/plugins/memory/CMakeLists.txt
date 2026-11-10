@@ -1,5 +1,6 @@
 add_library(agent_memory
     src/in_memory_store.cpp
+    src/model_summarizer.cpp
     src/rule_based_summarizer.cpp
 )
 

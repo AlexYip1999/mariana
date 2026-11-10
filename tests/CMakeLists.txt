@@ -57,6 +57,7 @@ target_link_libraries(agent_host_reference_tests PRIVATE agent_host_reference ag
 
 add_executable(agent_memory_tests
     memory_test.cpp
+    session_memory_test.cpp
 )
 target_include_directories(agent_memory_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(agent_memory_tests PRIVATE agent_memory agent_runtime agent_third_party)
