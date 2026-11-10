@@ -35,7 +35,7 @@ Memory Phase 2 已收尾：`MemoryStore`/`Summarizer` 通用契约、Noop/InMemo
 | `source/plugins/metrics/` | metrics 插件：token/速度/缓存/上下文/费用统计 |
 | `source/hosts/cli/` | 宿主 #1：命令行（`agent-cli`，交互式；启动仅 `--help/--version/--config/--memory`，其他用命令） |
 | `source/hosts/reference/` | 纯 C++ 参考 Host Adapter：`SendAsync`/worker、`RunHandle`/generation、主线程 ToolScheduler、迟到结果抑制（UE 接入的对照实现） |
-| `tests/` | 单元测试（doctest，186 个 TEST_CASE / 12 个 CTest target，含 DoD、eval mock、Memory） |
+| `tests/` | 单元测试（doctest，191 个 TEST_CASE / 12 个 CTest target，含 DoD、eval mock、Memory） |
 | `scripts/` | 格式化 / 检查 / 校验脚本（PowerShell） |
 | `third_party/` | 单头依赖（nlohmann/json、doctest） |
 | `.dsh/skills/` | 项目级 DSH skill（`cpp-code-style` 代码规范） |

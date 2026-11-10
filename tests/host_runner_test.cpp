@@ -297,13 +297,20 @@ TEST_CASE("host runner persists jsonl memory and recalls it in a later session")
             return std::make_unique<FixedTransport>(requests);
         };
 
-        // 第一个会话：写入记忆，并验证同会话内召回注入。
+        // 第一个会话：写入两条记忆（验证 id 不互相覆盖），并验证同会话内召回注入。
         std::ostringstream out;
         std::ostringstream err;
-        const std::string first_input = "/memory add 用户的电话是 13800001111\n/memory list\n电话\n/exit\n";
+        const std::string first_input = "/memory add 用户的电话是 13800001111\n"
+                                        "/memory add 用户的邮箱是 user@example.com\n"
+                                        "/memory list\n"
+                                        "/memory\n"
+                                        "电话\n"
+                                        "/exit\n";
         CHECK(RunWithInput({"--memory", memory_path.string()}, environment, first_input, out, err) == 0);
         CHECK(out.str().find("remembered cli-") != std::string::npos);
         CHECK(out.str().find("13800001111") != std::string::npos);
+        CHECK(out.str().find("user@example.com") != std::string::npos);
+        CHECK(out.str().find("(2 records)") != std::string::npos);
         CHECK(std::filesystem::exists(memory_path));
         REQUIRE(requests->size() == 1);
         CHECK((*requests)[0].dump().find("13800001111") != std::string::npos);

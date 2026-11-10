@@ -79,8 +79,21 @@
 - 打开：`JsonlMemoryStore::Open(path, error)`；父目录不存在时自动创建，文件不存在时创建，然后逐行重放；
 - 追加式操作日志（每行一个 JSON）：`{"op":"remember","record":{...}}` / `{"op":"forget","id":"..."}` /
   `{"op":"clear_scope","scope":{...}}`；
-- 写入失败返回 `false` 并写 `error`，内存状态不变；重放遇到非法行时 `Open` 失败并报告行号；
+- 写入失败返回 `false` 并写 `error`，内存状态不变；重放遇到**带换行**的非法行时 `Open` 失败并报告行号
+  （撕裂尾行的例外见下）；
 - `Records()` / `Size()` / `Path()` 供 Host 展示；召回语义与 `InMemoryMemoryStore` 完全一致。
+- **撕裂尾行容错**：`Open` 读取时，若文件最后一行没有换行结尾（进程崩溃/断电时只写了一半）：
+  - 该行是完整 JSON：正常重放，并在文件尾补写一个换行，保证后续追加不会与它粘成一行；
+  - 该行解析失败（被截断）：视为撕裂行忽略（不报错），并用一次压缩重写文件清掉残留；
+  - 其它**带换行**的非法行仍然报错：`failed to parse memory jsonl at line <N>: <detail>`（行号从 1 开始）。
+- **日志压缩**：`bool Compact(std::string& error)` 把当前记录重写成 remember 行（写 `path + ".tmp"` →
+  flush/close → 替换原文件（Windows 下先 remove 再 rename）→ 重新以 append 打开），锁内执行；
+  成功后操作计数清零；失败返回 `false` 并写 `error`，内存状态不变（原文件不变，或保留 `.tmp` 快照）。
+- **自动压缩**：`Remember` / `Forget` / `ClearScope` 成功后累计操作数，当
+  `ops >= 128 && ops >= 2 * records + 16` 时自动触发一次 `Compact`，避免日志相对记录数无限膨胀。
+  自动压缩失败会被忽略（数据已落盘，下次写操作再试），不影响本次操作的返回值；手动 `Compact` 失败则返回错误。
+- JSONL 仍然是**追加日志**：单次更新/删除只追加新行，长期运行的体积由自动/手动 `Compact` 控制；
+  需要固定体积或人工排障时可在 Host 侧显式调用 `Compact`。
 
 CLI 接入：
 
@@ -94,7 +107,7 @@ agent-cli --memory .\memory.jsonl       # 启动参数；也可在配置里写 "
 
 - 开启后 `AgentFactory` 打开 `enable_recall`，召回作用域固定为 `cli:default`，因此新会话会加载同一 JSONL 并自动召回；
 - 打开失败（路径不可用/文件损坏）会拒绝启动，避免静默丢记忆；单次写入失败由 `/memory add` 输出错误；
-- JSONL 是追加日志，长期使用可按 Host 策略定期重写压缩（当前未内置）。
+- `Compact` 由 Store 内置（自动 + 手动），Host 无需自行重写文件；`/memory` 相关命令只改追加日志。
 
 ## 6. 内置实现
 
@@ -102,7 +115,8 @@ agent-cli --memory .\memory.jsonl       # 启动参数；也可在配置里写 "
 - `agent::plugins::memory::InMemoryMemoryStore`：进程内确定性实现，用于测试/CLI 演示/UE 早期接入。
   召回规则：文本或 tag 命中优先，其次 `importance`、`updated_at`、`id`；支持 tags（AND）、kinds、scopes 过滤与
   `limit` / `max_chars` 预算。中文没有分词：query 包含某个 tag 也算命中，Host 应写入有意义的 tags。
-- `agent::plugins::memory::JsonlMemoryStore`：JSONL 追加日志实现，重启后重放恢复（见上节）。
+- `agent::plugins::memory::JsonlMemoryStore`：JSONL 追加日志实现，重启后重放恢复，自带撕裂尾行修复与
+  自动/手动 `Compact`（见上节）。
 - `agent::plugins::memory::RuleBasedSummarizer`：保留最近 N 条非空非 tool 消息的规则摘要，确定性、零模型调用。
 - `agent::plugins::memory::ModelSummarizer`：用 `ChatModel` 生成摘要，可配 fallback。
 
@@ -143,7 +157,7 @@ store->Remember(record, error);
 规则摘要（保留最近、排除 tool、预算）、Runner 注入位置与预算、关闭记忆时零注入、召回异常降级。
 
 `tests/jsonl_memory_store_test.cpp`：JSONL 打开/建目录、重开往返、更新、forget、clear_scope、
-排序/预算、非法行失败。
+排序/预算、非法行失败、撕裂尾行修复、完整尾行补换行、带换行非法行报错、手动/自动压缩。
 
 `tests/session_memory_test.cpp`：Session 压缩（保留最近 K 轮、摘要消息替换旧轮次）、压缩失败/关闭时保留历史、
 `ModelSummarizer` 的请求参数（temperature 0 / max_tokens）、截断与 fallback。
@@ -155,4 +169,4 @@ seed 记忆后验证召回注入到模型请求（`request_contains`）与跨轮
 
 - UE 持久化：SQLite / `USaveGame` 版 `MemoryStore`；
 - `memory_search`/`memory_write` 可选工具、异步/后台压缩、`scope=world` 共享与传播；
-- JSONL 日志的定期重写/压缩、记忆写入的隐私/保留/删除策略，向量/embedding 检索。
+- 记忆写入的隐私/保留/删除策略，向量/embedding 检索。

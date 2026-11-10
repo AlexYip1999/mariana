@@ -1,7 +1,6 @@
 #include "agent/plugins/memory/jsonl_memory_store.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -13,7 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "agent/core/utf8.h"
+#include "memory_recall.h"
 
 namespace agent::plugins::memory
 {
@@ -24,6 +23,11 @@ namespace
 constexpr const char* REMEMBER_OP = "remember";
 constexpr const char* FORGET_OP = "forget";
 constexpr const char* CLEAR_SCOPE_OP = "clear_scope";
+
+// 自动压缩阈值：至少累计这么多次追加写才考虑压缩，避免小规模 Store 频繁重写文件。
+constexpr std::size_t MIN_AUTO_COMPACT_OPS = 128;
+// 日志行数相对当前记录数的额外放大容忍度：超过 2 * records + 16 行才值得压缩。
+constexpr std::size_t AUTO_COMPACT_SLACK_OPS = 16;
 
 // 空行（含 CRLF 残留的 '\r' 与纯空白行）不参与重放。
 bool IsBlankLine(const std::string& line)
@@ -207,6 +211,14 @@ bool SerializeLine(const nlohmann::json& value, std::string& line, std::string& 
     }
 }
 
+bool SerializeRememberLine(const core::MemoryRecord& record, std::string& line, std::string& error)
+{
+    nlohmann::json value;
+    value["op"] = REMEMBER_OP;
+    value["record"] = RecordToJson(record);
+    return SerializeLine(value, line, error);
+}
+
 void UpsertRecord(std::vector<core::MemoryRecord>& records, const core::MemoryRecord& record)
 {
     const auto existing = std::find_if(records.begin(), records.end(),
@@ -252,6 +264,13 @@ bool AppendLine(std::ofstream& file, const std::filesystem::path& path, const st
         return false;
     }
     return true;
+}
+
+// 删除临时文件；失败不影响主流程（残留文件不参与重放）。
+void RemoveFileBestEffort(const std::filesystem::path& path)
+{
+    std::error_code error;
+    std::filesystem::remove(path, error);
 }
 
 // 重放一行：按 op 修改内存状态并校验格式；空行已由调用方跳过。
@@ -315,75 +334,87 @@ bool ReplayLine(std::vector<core::MemoryRecord>& records, const std::string& lin
     }
 }
 
-// 召回规则必须与 InMemoryMemoryStore 完全一致：以下辅助函数与 in_memory_store.cpp 保持同构。
-std::string LowerAscii(std::string text)
+// 读取文件尾是否带换行：不带换行的最后一行可能是崩溃时只写了一半的撕裂行。
+bool FileTailHasNewline(std::ifstream& input)
 {
-    for (char& c : text)
-    {
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    }
-    return text;
-}
-
-bool ContainsIgnoreCase(const std::string& haystack, const std::string& needle)
-{
-    return LowerAscii(haystack).find(LowerAscii(needle)) != std::string::npos;
-}
-
-bool MatchesKind(const std::vector<core::MemoryKind>& kinds, core::MemoryKind kind)
-{
-    return kinds.empty() || std::find(kinds.begin(), kinds.end(), kind) != kinds.end();
-}
-
-bool MatchesTags(const std::vector<std::string>& required, const std::vector<std::string>& actual)
-{
-    if (required.empty())
+    input.seekg(0, std::ios::end);
+    const std::streamoff size = input.tellg();
+    if (size <= 0)
     {
         return true;
     }
-    for (const std::string& tag : required)
+    input.seekg(size - 1, std::ios::beg);
+    char last_character = '\0';
+    if (!input.get(last_character))
     {
-        if (std::find(actual.begin(), actual.end(), tag) == actual.end())
+        return true;
+    }
+    return last_character == '\n';
+}
+
+// 重放结果：尾行缺换行时由 Open 决定是补换行还是用 Compact 重写文件。
+struct ReplayResult
+{
+    bool needs_trailing_newline = false;
+    bool torn_tail = false;
+};
+
+// 重放整个日志：带换行的非法行按行号报错；只有末尾缺换行的最后一行允许容错。
+bool ReplayFile(const std::filesystem::path& path, std::vector<core::MemoryRecord>& records, ReplayResult& result,
+                std::string& error)
+{
+    std::ifstream input(path, std::ios::in | std::ios::binary);
+    if (!input.is_open())
+    {
+        // 文件不存在或不可读：从空状态开始；追加流打开失败会在 Open 里报错。
+        return true;
+    }
+
+    const bool tail_has_newline = FileTailHasNewline(input);
+    input.clear();
+    input.seekg(0, std::ios::beg);
+
+    std::string line;
+    std::size_t line_number = 0;
+    while (std::getline(input, line))
+    {
+        ++line_number;
+        const bool has_newline = !input.eof() || tail_has_newline;
+        if (IsBlankLine(line))
         {
-            return false;
+            // 空行不参与重放；尾行缺换行时也要补换行，避免与下一次追加粘成一行。
+            if (!has_newline)
+            {
+                result.needs_trailing_newline = true;
+            }
+            continue;
         }
+        if (has_newline)
+        {
+            if (!ReplayLine(records, line, line_number, error))
+            {
+                return false;
+            }
+            continue;
+        }
+
+        // 末尾缺换行的最后一行：完整可解析则正常重放并补换行；解析失败视为半写入的撕裂行，
+        // 忽略且不报错（由 Open 用 Compact 重写文件清掉残留）。
+        std::string replay_error;
+        if (ReplayLine(records, line, line_number, replay_error))
+        {
+            result.needs_trailing_newline = true;
+            continue;
+        }
+        result.torn_tail = true;
+    }
+
+    if (input.bad())
+    {
+        error = "failed to read memory jsonl: " + path.string();
+        return false;
     }
     return true;
-}
-
-bool MatchesScope(const std::vector<core::MemoryScope>& scopes, const core::MemoryScope& scope)
-{
-    if (scopes.empty())
-    {
-        return true;
-    }
-    return std::find(scopes.begin(), scopes.end(), scope) != scopes.end();
-}
-
-bool MatchesText(const std::string& query_text, const core::MemoryRecord& record)
-{
-    if (query_text.empty())
-    {
-        return true;
-    }
-    if (ContainsIgnoreCase(record.text, query_text) || ContainsIgnoreCase(record.payload_json, query_text))
-    {
-        return true;
-    }
-    // 中文没有空格分词：query 里包含某个 tag 也算命中（Host 应写入有意义的 tags）。
-    for (const std::string& tag : record.tags)
-    {
-        if (!tag.empty() && ContainsIgnoreCase(query_text, tag))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-double ScoreHit(bool text_match, const core::MemoryRecord& record)
-{
-    return (text_match ? 1.0 : 0.0) + record.importance;
 }
 
 } // namespace
@@ -410,30 +441,12 @@ std::shared_ptr<JsonlMemoryStore> JsonlMemoryStore::Open(const std::filesystem::
         }
     }
 
-    // 先重放已有记录；解析失败时不打开追加流，文件保持原样。
+    // 先重放已有记录；带换行的非法行仍报错，撕裂尾行容错见 ReplayFile。
     std::vector<core::MemoryRecord> records;
-    std::ifstream input(path, std::ios::in | std::ios::binary);
-    if (input.is_open())
+    ReplayResult replay;
+    if (!ReplayFile(path, records, replay, error))
     {
-        std::string line;
-        std::size_t line_number = 0;
-        while (std::getline(input, line))
-        {
-            ++line_number;
-            if (IsBlankLine(line))
-            {
-                continue;
-            }
-            if (!ReplayLine(records, line, line_number, error))
-            {
-                return nullptr;
-            }
-        }
-        if (input.bad())
-        {
-            error = "failed to read memory jsonl: " + path.string();
-            return nullptr;
-        }
+        return nullptr;
     }
 
     std::shared_ptr<JsonlMemoryStore> store(new JsonlMemoryStore(path));
@@ -443,6 +456,30 @@ std::shared_ptr<JsonlMemoryStore> JsonlMemoryStore::Open(const std::filesystem::
     {
         error = "failed to open memory jsonl for append: " + path.string();
         return nullptr;
+    }
+
+    // 撕裂尾行已忽略但残留在文件里：立即重写，避免后续 append 与半行粘在一起。
+    if (replay.torn_tail)
+    {
+        std::string compact_error;
+        if (!store->Compact(compact_error))
+        {
+            error = "failed to repair memory jsonl: " + compact_error;
+            return nullptr;
+        }
+        return store;
+    }
+
+    // 最后一行完整但缺换行：补一个换行，保证后续 append 从新行开始。
+    if (replay.needs_trailing_newline)
+    {
+        store->m_file << '\n';
+        store->m_file.flush();
+        if (!store->m_file.good())
+        {
+            error = "failed to write memory jsonl: " + path.string();
+            return nullptr;
+        }
     }
     return store;
 }
@@ -459,12 +496,8 @@ bool JsonlMemoryStore::Remember(const core::MemoryRecord& record, std::string& e
         return false;
     }
 
-    nlohmann::json value;
-    value["op"] = REMEMBER_OP;
-    value["record"] = RecordToJson(record);
-
     std::string line;
-    if (!SerializeLine(value, line, error))
+    if (!SerializeRememberLine(record, line, error))
     {
         return false;
     }
@@ -476,73 +509,14 @@ bool JsonlMemoryStore::Remember(const core::MemoryRecord& record, std::string& e
         return false;
     }
     UpsertRecord(m_records, record);
+    RecordAppendedOperation();
     return true;
 }
 
 std::vector<core::MemoryHit> JsonlMemoryStore::Recall(const core::MemoryQuery& query)
 {
     std::lock_guard lock(m_mutex);
-    std::vector<core::MemoryHit> hits;
-    for (const core::MemoryRecord& record : m_records)
-    {
-        if (!MatchesKind(query.kinds, record.kind) || !MatchesTags(query.tags, record.tags) ||
-            !MatchesScope(query.scopes, record.scope))
-        {
-            continue;
-        }
-        const bool text_match = MatchesText(query.text, record);
-        if (!query.text.empty() && !text_match)
-        {
-            continue;
-        }
-        hits.push_back({record, ScoreHit(text_match, record)});
-    }
-
-    std::sort(hits.begin(), hits.end(),
-              [](const core::MemoryHit& left, const core::MemoryHit& right)
-              {
-                  if (left.score != right.score)
-                  {
-                      return left.score > right.score;
-                  }
-                  if (left.record.updated_at != right.record.updated_at)
-                  {
-                      return left.record.updated_at > right.record.updated_at;
-                  }
-                  return left.record.id < right.record.id;
-              });
-
-    if (query.limit > 0 && hits.size() > query.limit)
-    {
-        hits.resize(query.limit);
-    }
-
-    // 超出字符预算时按排序顺序截断文本，尽量保留高分条目。
-    if (query.max_chars > 0)
-    {
-        std::vector<core::MemoryHit> budgeted;
-        std::size_t remaining = query.max_chars;
-        for (core::MemoryHit hit : hits)
-        {
-            if (remaining == 0)
-            {
-                break;
-            }
-            if (hit.record.text.size() > remaining)
-            {
-                hit.record.text.resize(core::Utf8PrefixSize(hit.record.text, remaining));
-                remaining = 0;
-            }
-            else
-            {
-                remaining -= hit.record.text.size();
-            }
-            budgeted.push_back(std::move(hit));
-        }
-        hits = std::move(budgeted);
-    }
-
-    return hits;
+    return detail::RecallRecords(m_records, query);
 }
 
 bool JsonlMemoryStore::Forget(const std::string& id, std::string& error)
@@ -574,6 +548,7 @@ bool JsonlMemoryStore::Forget(const std::string& id, std::string& error)
         return false;
     }
     m_records.erase(found);
+    RecordAppendedOperation();
     return true;
 }
 
@@ -596,7 +571,156 @@ bool JsonlMemoryStore::ClearScope(const core::MemoryScope& scope, std::string& e
         return false;
     }
     RemoveScopeRecords(m_records, scope);
+    RecordAppendedOperation();
     return true;
+}
+
+bool JsonlMemoryStore::Compact(std::string& error)
+{
+    error.clear();
+    std::lock_guard lock(m_mutex);
+    return CompactLocked(error);
+}
+
+bool JsonlMemoryStore::ReopenAppendFile(std::string& error)
+{
+    if (m_file.is_open())
+    {
+        m_file.close();
+    }
+    m_file.clear();
+    m_file.open(m_path, std::ios::out | std::ios::app | std::ios::binary);
+    if (!m_file.is_open())
+    {
+        error = "failed to open memory jsonl for append: " + m_path.string();
+        return false;
+    }
+    return true;
+}
+
+// 尽力恢复追加流：压缩中途失败时避免后续写操作全部失败；恢复失败只把原因追加到 error。
+void JsonlMemoryStore::TryReopenAppendFile(std::string& error)
+{
+    std::string reopen_error;
+    if (ReopenAppendFile(reopen_error))
+    {
+        return;
+    }
+    if (!error.empty())
+    {
+        error += "; ";
+    }
+    error += reopen_error;
+}
+
+// 把当前记录写成一组 remember 行到临时文件；失败时临时文件由调用方清理。
+bool JsonlMemoryStore::WriteSnapshot(const std::filesystem::path& temp_path, std::string& error)
+{
+    std::ofstream temp_file(temp_path, std::ios::out | std::ios::trunc | std::ios::binary);
+    if (!temp_file.is_open())
+    {
+        error = "failed to write memory jsonl: " + temp_path.string();
+        return false;
+    }
+
+    for (const core::MemoryRecord& record : m_records)
+    {
+        std::string line;
+        if (!SerializeRememberLine(record, line, error))
+        {
+            return false;
+        }
+        temp_file << line << '\n';
+    }
+
+    temp_file.flush();
+    temp_file.close();
+    if (temp_file.fail())
+    {
+        error = "failed to write memory jsonl: " + temp_path.string();
+        return false;
+    }
+    return true;
+}
+
+// 把当前记录重写为 remember 行：临时文件 → 替换原文件 → 重新以 append 打开（调用方需持有 m_mutex）。
+bool JsonlMemoryStore::CompactLocked(std::string& error)
+{
+    std::filesystem::path temp_path = m_path;
+    temp_path += ".tmp";
+
+    if (!WriteSnapshot(temp_path, error))
+    {
+        RemoveFileBestEffort(temp_path);
+        return false;
+    }
+
+    // Windows 下 rename 不能覆盖已存在的目标文件：先关闭追加流、删除原文件，再改名。
+    // 追加流可能已在一次失败的压缩恢复中关闭，此时跳过关闭步骤。
+    if (m_file.is_open())
+    {
+        m_file.close();
+        if (m_file.fail())
+        {
+            error = "failed to close memory jsonl: " + m_path.string();
+            TryReopenAppendFile(error);
+            RemoveFileBestEffort(temp_path);
+            return false;
+        }
+    }
+
+    std::error_code remove_error;
+    std::filesystem::remove(m_path, remove_error);
+    if (remove_error)
+    {
+        error = "failed to replace memory jsonl " + m_path.string() + ": " + remove_error.message();
+        TryReopenAppendFile(error);
+        RemoveFileBestEffort(temp_path);
+        return false;
+    }
+
+    std::error_code rename_error;
+    std::filesystem::rename(temp_path, m_path, rename_error);
+    if (rename_error)
+    {
+        // 原文件已删除：保留临时文件（含完整状态）便于恢复，并重新打开追加流。
+        error = "failed to replace memory jsonl " + m_path.string() + ": " + rename_error.message() +
+                "; snapshot kept at " + temp_path.string();
+        TryReopenAppendFile(error);
+        return false;
+    }
+
+    if (!ReopenAppendFile(error))
+    {
+        return false;
+    }
+
+    m_appended_ops = 0;
+    return true;
+}
+
+// 写操作成功后调用（调用方需持有 m_mutex）：累计操作数，达到阈值时尝试自动压缩。
+// 数据已经落盘，自动压缩失败只影响文件体积，不影响本次操作结果，等下次写操作再试。
+void JsonlMemoryStore::RecordAppendedOperation()
+{
+    ++m_appended_ops;
+    if (!ShouldAutoCompact())
+    {
+        return;
+    }
+    std::string compact_error;
+    CompactLocked(compact_error);
+}
+
+// 自动压缩阈值：至少累计 MIN_AUTO_COMPACT_OPS 次追加，且日志行数相对当前记录数放大到 2 倍以上。
+// 小规模 Store 不会因少量更新反复重写文件。
+bool JsonlMemoryStore::ShouldAutoCompact() const
+{
+    if (m_appended_ops < MIN_AUTO_COMPACT_OPS)
+    {
+        return false;
+    }
+    return m_appended_ops >= m_records.size() * 2 + AUTO_COMPACT_SLACK_OPS;
 }
 
 const std::filesystem::path& JsonlMemoryStore::Path() const

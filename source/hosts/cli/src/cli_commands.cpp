@@ -332,7 +332,7 @@ class MemoryCommand final : public CliCommand
             }
             const std::int64_t now = NowMillis();
             core::MemoryRecord record;
-            record.id = "cli-" + std::to_string(now);
+            record.id = NextMemoryId();
             record.kind = core::MemoryKind::Fact;
             record.text = sub.second;
             record.tags = {"cli"};
@@ -366,6 +366,16 @@ class MemoryCommand final : public CliCommand
         err << "usage: " << Usage() << "\n";
         return CommandResult::Handled;
     }
+
+  private:
+    /// 毫秒时间戳 + 进程内自增序号，避免同毫秒多次 add 生成相同 id 而互相覆盖。
+    std::string NextMemoryId()
+    {
+        ++m_sequence;
+        return "cli-" + std::to_string(NowMillis()) + "-" + std::to_string(m_sequence);
+    }
+
+    std::size_t m_sequence = 0;
 };
 
 class TraceCommand final : public CliCommand

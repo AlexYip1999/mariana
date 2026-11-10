@@ -96,6 +96,76 @@ void WriteLines(const std::filesystem::path& path, const std::vector<std::string
     }
 }
 
+std::vector<std::string> ReadLines(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::in | std::ios::binary);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(file, line))
+    {
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+bool EndsWithNewline(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::in | std::ios::binary);
+    if (!file.is_open())
+    {
+        return false;
+    }
+    file.seekg(0, std::ios::end);
+    const std::streamoff size = file.tellg();
+    if (size <= 0)
+    {
+        return false;
+    }
+    file.seekg(size - 1, std::ios::beg);
+    char last_character = '\0';
+    file.get(last_character);
+    return last_character == '\n';
+}
+
+std::filesystem::path TempPathOf(const std::filesystem::path& path)
+{
+    std::filesystem::path temp_path = path;
+    temp_path += ".tmp";
+    return temp_path;
+}
+
+const agent::core::MemoryRecord* FindRecord(const std::vector<agent::core::MemoryRecord>& records,
+                                            const std::string& id)
+{
+    for (const agent::core::MemoryRecord& record : records)
+    {
+        if (record.id == id)
+        {
+            return &record;
+        }
+    }
+    return nullptr;
+}
+
+void CheckRecordFields(const agent::core::MemoryRecord& expected, const agent::core::MemoryRecord& actual)
+{
+    CHECK(actual.id == expected.id);
+    CHECK(actual.kind == expected.kind);
+    CHECK(actual.text == expected.text);
+    CHECK(actual.payload_json == expected.payload_json);
+    CHECK(actual.tags == expected.tags);
+    CHECK(actual.importance == doctest::Approx(expected.importance));
+    CHECK(actual.confidence == doctest::Approx(expected.confidence));
+    CHECK(actual.scope.kind == expected.scope.kind);
+    CHECK(actual.scope.id == expected.scope.id);
+    CHECK(actual.source_session == expected.source_session);
+    CHECK(actual.source_run == expected.source_run);
+    CHECK(actual.created_at == expected.created_at);
+    CHECK(actual.updated_at == expected.updated_at);
+    CHECK(actual.valid_to == expected.valid_to);
+    CHECK(actual.expires_at == expected.expires_at);
+}
+
 } // namespace
 
 TEST_CASE("jsonl store creates missing directories and an empty file")
@@ -524,4 +594,246 @@ TEST_CASE("jsonl store rejects empty ids without writing")
     INFO("reopen error: " << error);
     REQUIRE(reopened != nullptr);
     CHECK(reopened->Size() == 0);
+}
+
+TEST_CASE("jsonl store ignores a torn trailing line and repairs the file")
+{
+    TempDirectory temp;
+    const std::filesystem::path path = temp.Path() / "memory.jsonl";
+
+    // 先正常写入两条记录，模拟已经落盘的历史。
+    std::string error;
+    {
+        const auto store = OpenStore(path, error);
+        INFO("open error: " << error);
+        REQUIRE(store != nullptr);
+        REQUIRE(store->Remember(MakeRecord("m-1", "张三的电话是 13800001111", "agent", "npc-1"), error));
+        REQUIRE(store->Remember(MakeRecord("m-2", "街市今天很热闹", "world", "village"), error));
+    }
+
+    // 模拟进程在写最后一行时崩溃：文件尾是一段不完整 JSON，且没有换行。
+    {
+        std::ofstream file(path, std::ios::out | std::ios::app | std::ios::binary);
+        file << R"({"op":"remember","record":{"id":"m-3","text":"半写入的记)";
+    }
+
+    // 撕裂尾行被忽略：Open 成功、状态不含该行、且不报错。
+    {
+        const auto store = OpenStore(path, error);
+        INFO("open error: " << error);
+        REQUIRE(store != nullptr);
+        CHECK(error.empty());
+        REQUIRE(store->Size() == 2);
+
+        const std::vector<agent::core::MemoryRecord> records = store->Records();
+        REQUIRE(records.size() == 2);
+        CHECK(records[0].id == "m-1");
+        CHECK(records[1].id == "m-2");
+        CHECK(FindRecord(records, "m-3") == nullptr);
+    }
+
+    // Open 时已用 Compact 重写文件：只剩两条完整记录，且以换行结尾；压缩用的 .tmp 已清理。
+    CHECK(EndsWithNewline(path));
+    CHECK(ReadLines(path).size() == 2);
+    CHECK_FALSE(std::filesystem::exists(TempPathOf(path)));
+
+    // 修复后的文件可以继续追加，重开后状态一致。
+    {
+        const auto store = OpenStore(path, error);
+        INFO("reopen error: " << error);
+        REQUIRE(store != nullptr);
+        REQUIRE(store->Remember(MakeRecord("m-3", "补写的记录", "agent", "npc-1"), error));
+        CHECK(store->Size() == 3);
+    }
+
+    const auto reopened = OpenStore(path, error);
+    INFO("final reopen error: " << error);
+    REQUIRE(reopened != nullptr);
+    REQUIRE(reopened->Size() == 3);
+
+    const std::vector<agent::core::MemoryRecord> records = reopened->Records();
+    const agent::core::MemoryRecord* restored = FindRecord(records, "m-3");
+    REQUIRE(restored != nullptr);
+    CHECK(restored->text == "补写的记录");
+    CHECK(FindRecord(records, "m-1") != nullptr);
+}
+
+TEST_CASE("jsonl store replays a complete last line without trailing newline")
+{
+    TempDirectory temp;
+    const std::filesystem::path path = temp.Path() / "memory.jsonl";
+
+    // 手工写入两行；最后一行是完整 JSON 但没有结尾换行。
+    {
+        std::ofstream file(path, std::ios::out | std::ios::trunc | std::ios::binary);
+        file << R"({"op":"remember","record":{"id":"m-1","kind":"Fact","text":"张三的电话是 13800001111"}})"
+             << "\n";
+        file << R"({"op":"remember","record":{"id":"m-2","kind":"Event","text":"街市今天很热闹"}})";
+    }
+    CHECK_FALSE(EndsWithNewline(path));
+
+    // 最后一行被正常重放，Open 成功且不报错。
+    std::string error;
+    {
+        const auto store = OpenStore(path, error);
+        INFO("open error: " << error);
+        REQUIRE(store != nullptr);
+        REQUIRE(store->Size() == 2);
+
+        const std::vector<agent::core::MemoryRecord> records = store->Records();
+        const agent::core::MemoryRecord* last = FindRecord(records, "m-2");
+        REQUIRE(last != nullptr);
+        CHECK(last->kind == agent::core::MemoryKind::Event);
+        CHECK(last->text == "街市今天很热闹");
+    }
+
+    // 文件尾已被补齐换行。
+    CHECK(EndsWithNewline(path));
+    CHECK(ReadLines(path).size() == 2);
+
+    // 后续 append 从新行开始，不会和最后一条完整 JSON 粘成一行。
+    {
+        const auto store = OpenStore(path, error);
+        INFO("reopen error: " << error);
+        REQUIRE(store != nullptr);
+        REQUIRE(store->Remember(MakeRecord("m-3", "补写的记录", "agent", "npc-1"), error));
+    }
+    CHECK(ReadLines(path).size() == 3);
+
+    const auto reopened = OpenStore(path, error);
+    INFO("final reopen error: " << error);
+    REQUIRE(reopened != nullptr);
+    REQUIRE(reopened->Size() == 3);
+    CHECK(FindRecord(reopened->Records(), "m-3") != nullptr);
+
+    // 补换行不是撕裂行：最后一行仍在，且内容不变。
+    agent::core::MemoryQuery query;
+    query.text = "街市";
+    REQUIRE(reopened->Recall(query).size() == 1);
+}
+
+TEST_CASE("jsonl store still rejects malformed lines that end with a newline")
+{
+    TempDirectory temp;
+    const std::filesystem::path path = temp.Path() / "memory.jsonl";
+
+    // 最后一行同样非法但带换行结尾：不属于撕裂尾行，必须报错并给出行号。
+    {
+        std::ofstream file(path, std::ios::out | std::ios::trunc | std::ios::binary);
+        file << R"({"op":"remember","record":{"id":"m-1","text":"ok"}})" << "\n";
+        file << R"({"op":"forget")" << "\n";
+    }
+
+    std::string error;
+    const auto store = OpenStore(path, error);
+    CHECK(store == nullptr);
+    CHECK(error.find("line 2") != std::string::npos);
+    CHECK(error.find("failed to parse memory jsonl") != std::string::npos);
+}
+
+TEST_CASE("jsonl store compacts the log and keeps the same state after reopen")
+{
+    TempDirectory temp;
+    const std::filesystem::path path = temp.Path() / "memory.jsonl";
+    const std::filesystem::path temp_path = TempPathOf(path);
+
+    // 3 条 remember + 5 次更新同一条 + 1 次 forget = 9 行日志，最终只剩 2 条记录。
+    std::string error;
+    std::vector<agent::core::MemoryRecord> before_compact;
+    {
+        const auto store = OpenStore(path, error);
+        INFO("open error: " << error);
+        REQUIRE(store != nullptr);
+
+        REQUIRE(store->Remember(MakeRecord("m-1", "旧号码 13800001111", "agent", "npc-1", 0.5, 10), error));
+        REQUIRE(store->Remember(MakeRecord("m-2", "街市今天很热闹", "world", "village", 0.7, 20), error));
+        REQUIRE(store->Remember(MakeRecord("m-3", "计划明天赶集", "world", "village", 0.9, 30), error));
+        for (int update = 0; update < 5; ++update)
+        {
+            REQUIRE(store->Remember(
+                MakeRecord("m-1", "新号码 13900002222", "agent", "npc-1", 0.6 + update, 11 + update), error));
+        }
+
+        REQUIRE(store->Forget("m-2", error));
+        before_compact = store->Records();
+        REQUIRE(before_compact.size() == 2);
+    }
+
+    const std::size_t lines_before = ReadLines(path).size();
+    REQUIRE(lines_before == 9);
+
+    // 手动 Compact：文件重写成 2 行 remember，临时文件被替换掉，内存状态不变。
+    {
+        const auto store = OpenStore(path, error);
+        INFO("reopen error: " << error);
+        REQUIRE(store != nullptr);
+        REQUIRE(store->Size() == 2);
+
+        std::string compact_error;
+        CHECK(store->Compact(compact_error));
+        CHECK(compact_error.empty());
+        CHECK_FALSE(std::filesystem::exists(temp_path));
+        CHECK(store->Size() == 2);
+
+        // 压缩后仍可正常追加。
+        REQUIRE(store->Remember(MakeRecord("m-4", "新记录", "agent", "npc-1"), error));
+        CHECK(store->Size() == 3);
+    }
+
+    const std::size_t lines_after = ReadLines(path).size();
+    CHECK(lines_after == 3);
+    CHECK(lines_after < lines_before);
+
+    // 重开后记录集合与字段一致。
+    const auto reopened = OpenStore(path, error);
+    INFO("final reopen error: " << error);
+    REQUIRE(reopened != nullptr);
+    REQUIRE(reopened->Size() == 3);
+
+    const std::vector<agent::core::MemoryRecord> records = reopened->Records();
+    std::vector<agent::core::MemoryRecord> expected = before_compact;
+    expected.push_back(MakeRecord("m-4", "新记录", "agent", "npc-1"));
+    for (const agent::core::MemoryRecord& expected_record : expected)
+    {
+        const agent::core::MemoryRecord* actual = FindRecord(records, expected_record.id);
+        REQUIRE(actual != nullptr);
+        CheckRecordFields(expected_record, *actual);
+    }
+}
+
+TEST_CASE("jsonl store auto compacts after enough appended operations")
+{
+    TempDirectory temp;
+    const std::filesystem::path path = temp.Path() / "memory.jsonl";
+
+    // 反复更新同一条记录：不压缩时日志会随操作次数线性增长，累计超过阈值后应自动重写。
+    std::string error;
+    {
+        const auto store = OpenStore(path, error);
+        INFO("open error: " << error);
+        REQUIRE(store != nullptr);
+
+        for (int update = 1; update <= 300; ++update)
+        {
+            const std::string text = "版本 " + std::to_string(update);
+            REQUIRE(store->Remember(MakeRecord("m-1", text, "agent", "npc-1", 0.5, update), error));
+        }
+        CHECK(store->Size() == 1);
+    }
+
+    // 自动压缩后文件行数远少于追加次数（300），状态仍是最新版本。
+    const std::vector<std::string> lines = ReadLines(path);
+    INFO("log lines: " << lines.size());
+    CHECK(lines.size() < 100);
+
+    const auto reopened = OpenStore(path, error);
+    INFO("reopen error: " << error);
+    REQUIRE(reopened != nullptr);
+    REQUIRE(reopened->Size() == 1);
+
+    const std::vector<agent::core::MemoryRecord> records = reopened->Records();
+    REQUIRE(records.size() == 1);
+    CHECK(records.front().id == "m-1");
+    CHECK(records.front().text == "版本 300");
+    CHECK(records.front().updated_at == 300);
 }
